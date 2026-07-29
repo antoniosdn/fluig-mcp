@@ -1,0 +1,58 @@
+{
+  "name": "fluig-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for TOTVS Fluig — read and write datasets, forms, global events and BPM process definitions over the API, without Fluig Studio.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Rodrigo de Souza Faria (https://github.com/alucardigo)",
+  "homepage": "https://github.com/alucardigo/fluig-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alucardigo/fluig-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/alucardigo/fluig-mcp/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "fluig",
+    "totvs",
+    "bpm",
+    "ecm",
+    "workflow",
+    "low-code",
+    "ai-agent",
+    "llm-tools",
+    "soap",
+    "headless"
+  ],
+  "main": "./server.js",
+  "bin": {
+    "fluig-mcp": "./server.js",
+    "fluig-cli": "./bin/cli.js"
+  },
+  "files": [
+    "server.js",
+    "src/",
+    "bin/",
+    ".env.example",
+    "README.md",
+    "README.pt-BR.md",
+    "SECURITY.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "list": "node server.js --list",
+    "test": "node --test",
+    "check": "node --check server.js && node --check src/client.js && node --check src/config.js && node --check src/tools.js && node --check bin/cli.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "soap": "^1.9.3"
+  }
+}

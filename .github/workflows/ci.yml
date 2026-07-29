@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22', '24']
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - run: npm ci
+
+      - name: Syntax check
+        run: npm run check
+
+      - name: Unit tests
+        run: npm test
+
+      # The tool surface must be inspectable without credentials — that property is what
+      # lets someone audit this server before handing it a password, so it is a test.
+      - name: Tool surface lists without any configuration
+        run: |
+          node server.js --list
+          test "$(node server.js --list | grep -cE '^\s+[! ] fluig_')" -eq 56
+
+      - name: Read-only mode hides every write tool
+        env:
+          FLUIG_READONLY: '1'
+        run: |
+          node server.js --list
+          test "$(node server.js --list | grep -c '^  ! ')" -eq 0
+
+      # A missing variable must fail loudly instead of falling back to some default server.
+      - name: Missing configuration fails cleanly
+        run: |
+          if node server.js; then
+            echo 'expected a non-zero exit without FLUIG_HOST/USER/PASS' >&2
+            exit 1
+          fi

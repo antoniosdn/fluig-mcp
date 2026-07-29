@@ -1,0 +1,19 @@
+node_modules/
+
+# Credentials — never commit these.
+.env
+.env.*
+!.env.example
+
+# Output of the CLI (dumped datasets, forms, process definitions). This is your
+# employer's source code: keep it out of the repository.
+out/
+
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+coverage/
+*.tgz
