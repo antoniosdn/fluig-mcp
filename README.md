@@ -4,60 +4,59 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D20-informational)](package.json)
 
-**Operate a TOTVS Fluig instance from an AI agent or a terminal — datasets, forms, global events and BPM process definitions — without opening Fluig Studio.**
-
-[Leia em português](README.pt-BR.md)
+**Opere um ambiente TOTVS Fluig por um agente de IA ou pelo terminal — datasets, formulários,
+eventos globais e definições de processo BPM — sem abrir o Fluig Studio.**
 
 ---
 
-## Why
+## Por quê
 
-Development on Fluig normally goes through Fluig Studio, an Eclipse distribution. Reading one
-form event, checking which dataset a workflow calls, or shipping a one-line fix to a service
-task all mean launching an IDE, exporting a package, importing it back, and publishing by hand.
-Nothing in that loop is scriptable, and none of it is reachable by an agent.
+Desenvolver no Fluig normalmente passa pelo Fluig Studio, uma distribuição do Eclipse. Ler um
+evento de formulário, descobrir qual dataset um workflow chama ou subir uma correção de uma linha
+num service task significa abrir a IDE, exportar um pacote, importar de volta e publicar na mão.
+Nada desse ciclo é automatizável, e nada dele é acessível a um agente.
 
-Everything Fluig Studio does, it does over HTTP. `fluig-mcp` speaks the same three protocols
-the platform uses — the session cookie from `login.do`, the legacy `/webdesk/*` SOAP services,
-and the v2 REST API — from a plain Node process. That makes the whole platform available as
-[Model Context Protocol](https://modelcontextprotocol.io) tools, so an assistant can read a
-form's `validateForm`, trace why a task landed on the wrong person, or deploy a patched process
-version, in the conversation where the question came up.
+Tudo o que o Fluig Studio faz, ele faz por HTTP. O `fluig-mcp` fala os mesmos três protocolos da
+plataforma — o cookie de sessão do `login.do`, os serviços SOAP legados em `/webdesk/*` e a API
+REST v2 — de dentro de um processo Node comum. Isso expõe a plataforma inteira como ferramentas
+[Model Context Protocol](https://modelcontextprotocol.io): o assistente lê o `validateForm` de um
+formulário, rastreia por que uma tarefa caiu na pessoa errada ou publica uma versão corrigida de
+processo na mesma conversa em que a pergunta apareceu.
 
-## What it does
+## O que faz
 
-- **Datasets** — list, read the source of a custom dataset, inspect its structure without
-  running it, run it, create, update and delete.
-- **Forms** — list, read every file and event, and publish a new version.
-- **Global events** — read and write.
-- **BPM process definitions** — export the `.ecm30.xml`, read and patch process event source,
-  deploy a new version, publish it, **withdraw it to roll back**, and delete versions.
-- **Process instances** — start, take, move, cancel; read the card, the history, the
-  attachments, the active and reachable states, and who is eligible to receive a task.
-- **SQL passthrough** — read-only `SELECT` against the Fluig database, and against TOTVS RM
-  either directly or through the stored-statement bridge dataset.
-- **Escape hatches** — authenticated `GET`/`POST` against any path of the API.
+- **Datasets** — listar, ler o código de um dataset custom, inspecionar a estrutura sem executar,
+  executar, criar, atualizar e apagar.
+- **Formulários** — listar, ler todos os arquivos e eventos, e publicar nova versão.
+- **Eventos globais** — ler e gravar.
+- **Definições de processo BPM** — exportar o `.ecm30.xml`, ler e alterar o código dos eventos de
+  processo, publicar nova versão, **retirar do ar para reverter** e apagar versões.
+- **Solicitações** — iniciar, assumir, mover, cancelar; ler o card, o histórico, os anexos, os
+  estados ativos e disponíveis, e quem pode receber a tarefa.
+- **SQL passthrough** — `SELECT` read-only no banco do Fluig e no TOTVS RM, direto ou pela
+  sentença registrada.
+- **Escape hatches** — `GET`/`POST` autenticado em qualquer caminho da API.
 
-56 tools in total. Run `node server.js --list` to see them all — it needs no credentials, so you
-can audit the surface before trusting it with any.
+São 56 ferramentas. `node server.js --list` mostra todas — e não pede credencial nenhuma, para
+você auditar a superfície antes de confiar alguma a ela.
 
-### Process events without the widget
+### Evento de processo sem widget
 
-Process event source lives inside the process definition XML, in
-`<WorkflowProcessEvent><eventDescription>`. `fluig-mcp` reads it from there and writes it back
-by exporting the definition, patching the one event, and re-importing — which means every write
-becomes a **new, revertible version** that passed server-side validation, on a stock server,
-with no add-on installed. The round trip is byte-exact: accents, quotes and jQuery `$` all
-survive intact ([regression test](test/client.test.js)).
+O código dos eventos de processo vive dentro do XML da definição, em
+`<WorkflowProcessEvent><eventDescription>`. O `fluig-mcp` lê de lá e grava de volta exportando a
+definição, alterando só aquele evento e reimportando — o que faz de cada escrita uma **nova
+versão, revertível**, que passou pela validação do servidor, num servidor sem nenhum add-on
+instalado. O round-trip é byte a byte: acentos, aspas e o `$` do jQuery sobrevivem intactos
+([teste de regressão](test/client.test.js)).
 
-## Requirements
+## Requisitos
 
-- Node.js 20 or newer.
-- Network reach to a Fluig instance (tested against Fluig 1.8.x).
-- A Fluig user. Most tools want administrative rights; the process instance tools act as this
-  user and need the matching roles.
+- Node.js 20 ou superior.
+- Acesso de rede a um ambiente Fluig (testado contra Fluig 1.8.x).
+- Um usuário do Fluig. A maioria das ferramentas quer perfil administrativo; as de solicitação
+  agem como esse usuário e precisam dos papéis correspondentes.
 
-## Install
+## Instalação
 
 ```bash
 git clone https://github.com/alucardigo/fluig-mcp.git
@@ -65,49 +64,49 @@ cd fluig-mcp
 npm install
 ```
 
-## Configure
+## Configuração
 
-Configuration is entirely environment variables. There are **no defaults for the host or the
-credentials** — a missing variable is a hard error, never a silent fallback.
+Toda a configuração vem de variáveis de ambiente. **Não existe default de host nem de
+credencial** — variável faltando é erro explícito, nunca um fallback silencioso.
 
-| Variable | Required | Default | What it is |
+| Variável | Obrigatória | Default | O que é |
 |---|:-:|---|---|
-| `FLUIG_HOST` | yes | — | Portal base URL, with scheme and port |
-| `FLUIG_USER` | yes | — | Fluig login |
-| `FLUIG_PASS` | yes | — | Password for that login |
-| `FLUIG_COMPANY` | no | `1` | Tenant id; `-1` asks the server to resolve it |
-| `FLUIG_USERCODE` | no | `FLUIG_USER` | Colleague id, when it differs from the login |
-| `FLUIG_READONLY` | no | `0` | `1` exposes only the tools that cannot change server state |
-| `FLUIG_IPS` | no | — | Comma-separated fallback IPs, probed when DNS is unreliable |
-| `FLUIG_DATASOURCE` | no | `/jdbc/AppDS` | JNDI datasource of the Fluig database |
-| `FLUIG_RM_DATASOURCE` | no | `/jdbc/Corpore` | JNDI datasource of the TOTVS RM database |
-| `FLUIG_RM_BRIDGE_DATASET` | no | `ds_generic_rm_sql` | Dataset relaying RM stored SQL statements |
-| `FLUIG_SCRATCH_PREFIX` | no | `ds_mcp_` | Prefix of the throwaway datasets this server creates |
+| `FLUIG_HOST` | sim | — | URL base do portal, com esquema e porta |
+| `FLUIG_USER` | sim | — | Login do Fluig |
+| `FLUIG_PASS` | sim | — | Senha desse login |
+| `FLUIG_COMPANY` | não | `1` | Tenant; `-1` faz o servidor resolver |
+| `FLUIG_USERCODE` | não | `FLUIG_USER` | Colleague id, quando difere do login |
+| `FLUIG_READONLY` | não | `0` | `1` expõe só as ferramentas que não alteram o servidor |
+| `FLUIG_IPS` | não | — | IPs de fallback (vírgula), sondados quando o DNS oscila |
+| `FLUIG_DATASOURCE` | não | `/jdbc/AppDS` | Datasource JNDI do banco do Fluig |
+| `FLUIG_RM_DATASOURCE` | não | `/jdbc/Corpore` | Datasource JNDI do banco do TOTVS RM |
+| `FLUIG_RM_BRIDGE_DATASET` | não | `ds_generic_rm_sql` | Dataset que repassa sentenças SQL do RM |
+| `FLUIG_SCRATCH_PREFIX` | não | `ds_mcp_` | Prefixo dos datasets descartáveis criados aqui |
 
-See [`.env.example`](.env.example).
+Veja [`.env.example`](.env.example).
 
 ### Claude Code
 
 ```bash
 claude mcp add fluig \
-  --env FLUIG_HOST=https://fluig.example.com:8080 \
-  --env FLUIG_USER=your.user \
-  --env FLUIG_PASS=your-password \
-  -- node /absolute/path/to/fluig-mcp/server.js
+  --env FLUIG_HOST=https://fluig.exemplo.com:8080 \
+  --env FLUIG_USER=seu.usuario \
+  --env FLUIG_PASS=sua-senha \
+  -- node /caminho/absoluto/para/fluig-mcp/server.js
 ```
 
-### Claude Desktop, Cursor, or any other MCP client
+### Claude Desktop, Cursor ou qualquer outro cliente MCP
 
 ```json
 {
   "mcpServers": {
     "fluig": {
       "command": "node",
-      "args": ["/absolute/path/to/fluig-mcp/server.js"],
+      "args": ["/caminho/absoluto/para/fluig-mcp/server.js"],
       "env": {
-        "FLUIG_HOST": "https://fluig.example.com:8080",
-        "FLUIG_USER": "your.user",
-        "FLUIG_PASS": "your-password",
+        "FLUIG_HOST": "https://fluig.exemplo.com:8080",
+        "FLUIG_USER": "seu.usuario",
+        "FLUIG_PASS": "sua-senha",
         "FLUIG_READONLY": "1"
       }
     }
@@ -115,200 +114,202 @@ claude mcp add fluig \
 }
 ```
 
-Start with `FLUIG_READONLY=1`. Drop it once you know what the agent does with the read tools.
+Comece com `FLUIG_READONLY=1`. Tire quando já souber o que o agente faz com as ferramentas de
+leitura.
 
-## Check it works
+## Testando
 
-The CLI shares the client, so it is the fastest way to prove credentials and connectivity
-before an agent is involved:
+A CLI usa o mesmo cliente, então é o caminho mais rápido para provar credencial e conectividade
+antes de envolver um agente:
 
 ```bash
-export FLUIG_HOST=https://fluig.example.com:8080
-export FLUIG_USER=your.user
-export FLUIG_PASS=your-password
+export FLUIG_HOST=https://fluig.exemplo.com:8080
+export FLUIG_USER=seu.usuario
+export FLUIG_PASS=sua-senha
 
 node bin/cli.js ping
 node bin/cli.js dataset list colleague
 node bin/cli.js form list
-node bin/cli.js process events MyProcess
+node bin/cli.js process events MeuProcesso
 ```
 
-`node bin/cli.js --help` lists every command. Downloads land in `./out` (git-ignored).
+`node bin/cli.js --help` lista todos os comandos. O que for baixado vai para `./out`
+(fora do git).
 
-## Tools
+## Ferramentas
 
-`!` marks a tool that changes server state. Those are hidden entirely when `FLUIG_READONLY=1`,
-and each one also requires an explicit `confirm: true`.
+`!` marca ferramenta que altera o servidor. Essas desaparecem por completo com
+`FLUIG_READONLY=1`, e cada uma exige `confirm: true` explícito.
 
-**Session**
+**Sessão**
 
-| Tool | Does |
+| Ferramenta | O que faz |
 |---|---|
-| `fluig_ping` | Validate authentication and session |
+| `fluig_ping` | Valida autenticação e sessão |
 
 **Datasets**
 
-| Tool | Does |
+| Ferramenta | O que faz |
 |---|---|
-| `fluig_dataset_list` | List datasets, with an optional filter |
-| `fluig_dataset_get` | Source code of a custom dataset |
-| `fluig_dataset_structure` | Columns and types, without running the dataset |
-| `fluig_dataset_run` | Run it and return rows |
-| `!` `fluig_dataset_save` | Create or update a custom dataset (ES5/Rhino source) |
-| `!` `fluig_dataset_delete` | Delete a custom dataset |
+| `fluig_dataset_list` | Lista datasets, com filtro opcional |
+| `fluig_dataset_get` | Código-fonte de um dataset custom |
+| `fluig_dataset_structure` | Colunas e tipos, sem executar o dataset |
+| `fluig_dataset_run` | Executa e devolve as linhas |
+| `!` `fluig_dataset_save` | Cria ou atualiza dataset custom (código ES5/Rhino) |
+| `!` `fluig_dataset_delete` | Apaga dataset custom |
 
-**Forms**
+**Formulários**
 
-| Tool | Does |
+| Ferramenta | O que faz |
 |---|---|
-| `fluig_form_list` | List forms |
-| `fluig_form_events` | Customisation events with source (`displayFields`, `validateForm`, …) |
-| `fluig_form_files` / `fluig_form_file` | List files / read one file |
-| `fluig_form_full` | Metadata, every file and every event in one call |
-| `!` `fluig_form_save` | Publish a new form version |
+| `fluig_form_list` | Lista formulários |
+| `fluig_form_events` | Eventos de customização com o código (`displayFields`, `validateForm`, …) |
+| `fluig_form_files` / `fluig_form_file` | Lista arquivos / lê um arquivo |
+| `fluig_form_full` | Metadados, todos os arquivos e todos os eventos numa chamada |
+| `!` `fluig_form_save` | Publica nova versão do formulário |
 
-**Global events**
+**Eventos globais**
 
-| Tool | Does |
+| Ferramenta | O que faz |
 |---|---|
-| `fluig_globalevent_list` | List global events |
-| `!` `fluig_globalevent_save` | Create or update one |
+| `fluig_globalevent_list` | Lista eventos globais |
+| `!` `fluig_globalevent_save` | Cria ou atualiza um |
 
 **SQL**
 
-| Tool | Does |
+| Ferramenta | O que faz |
 |---|---|
-| `fluig_db_query` | Read-only `SELECT` against the Fluig database |
-| `fluig_rm_db_query` | Read-only `SELECT` against the TOTVS RM database |
-| `fluig_rm_query` | RM query through the stored-statement bridge dataset |
-| `!` `fluig_rm_db_exec` | `INSERT`/`UPDATE`/`DELETE` against RM |
+| `fluig_db_query` | `SELECT` read-only no banco do Fluig |
+| `fluig_rm_db_query` | `SELECT` read-only no banco do TOTVS RM |
+| `fluig_rm_query` | Consulta ao RM pela sentença registrada (dataset ponte) |
+| `!` `fluig_rm_db_exec` | `INSERT`/`UPDATE`/`DELETE` no RM |
 
-**Process definitions**
+**Definições de processo**
 
-| Tool | Does |
+| Ferramenta | O que faz |
 |---|---|
-| `fluig_process_export_xml` | Download the definition as `.ecm30.xml` |
-| `fluig_process_events_xml` | Process events with source, from the definition |
-| `fluig_process_versions` / `fluig_process_version` | Versions / active version |
-| `fluig_process_formid` / `fluig_process_image` | Bound form / flow diagram |
-| `fluig_process_search` / `fluig_process_available` | Search / what the user may start |
-| `fluig_deploy_list` | Processes available for export |
-| `fluig_process_event_get` | Event source from `event_proces` (legacy read) |
-| `!` `fluig_process_event_set_xml` | Patch an event as a new version (supports `dryRun`) |
-| `!` `fluig_process_import_xml` | Deploy a definition over REST v2 |
-| `!` `fluig_deploy_process` | Deploy a definition over SOAP |
-| `!` `fluig_process_version_withdraw` | Withdraw a version — how you roll a deploy back |
-| `!` `fluig_process_version_delete` | Delete a version |
-| `!` `fluig_process_diagram_set` | Replace a version's SVG diagram |
-| `!` `fluig_process_event_set` | Deprecated in-place patch of `event_proces` |
+| `fluig_process_export_xml` | Baixa a definição como `.ecm30.xml` |
+| `fluig_process_events_xml` | Eventos de processo com o código, direto da definição |
+| `fluig_process_versions` / `fluig_process_version` | Versões / versão ativa |
+| `fluig_process_formid` / `fluig_process_image` | Formulário vinculado / diagrama |
+| `fluig_process_search` / `fluig_process_available` | Busca / o que o usuário pode iniciar |
+| `fluig_deploy_list` | Processos disponíveis para export |
+| `fluig_process_event_get` | Código do evento na `event_proces` (leitura legada) |
+| `!` `fluig_process_event_set_xml` | Grava evento como nova versão (aceita `dryRun`) |
+| `!` `fluig_process_import_xml` | Deploy da definição pela REST v2 |
+| `!` `fluig_deploy_process` | Deploy da definição por SOAP |
+| `!` `fluig_process_version_withdraw` | Retira a versão do ar — é como se reverte um deploy |
+| `!` `fluig_process_version_delete` | Apaga uma versão |
+| `!` `fluig_process_diagram_set` | Substitui o SVG do diagrama da versão |
+| `!` `fluig_process_event_set` | Alteração in-place da `event_proces` (obsoleto) |
 
-**Process instances**
+**Solicitações**
 
-| Tool | Does |
+| Ferramenta | O que faz |
 |---|---|
-| `fluig_process_states` / `fluig_process_states_detail` | Reachable target states |
-| `fluig_process_active_states` / `fluig_process_actual_thread` | Where the instance sits |
-| `fluig_process_card_get` / `fluig_process_card_value` | Whole card / one field |
-| `fluig_process_history` / `fluig_process_attachments` | History / attachments |
-| `fluig_process_available_users` / `..._start` | Who may receive a task |
-| `fluig_user_replacements` | Who answers for whom, and until when |
-| `!` `fluig_process_start` | Start an instance |
-| `!` `fluig_process_take` | Take a pool task |
-| `!` `fluig_process_move` | Save the card and move the instance |
-| `!` `fluig_process_cancel` | Cancel an instance |
+| `fluig_process_states` / `fluig_process_states_detail` | Estados-destino disponíveis |
+| `fluig_process_active_states` / `fluig_process_actual_thread` | Onde a solicitação está |
+| `fluig_process_card_get` / `fluig_process_card_value` | Card inteiro / um campo |
+| `fluig_process_history` / `fluig_process_attachments` | Histórico / anexos |
+| `fluig_process_available_users` / `..._start` | Quem pode receber a tarefa |
+| `fluig_user_replacements` | Quem responde por quem, e até quando |
+| `!` `fluig_process_start` | Inicia uma solicitação |
+| `!` `fluig_process_take` | Assume tarefa de pool |
+| `!` `fluig_process_move` | Salva o card e move a solicitação |
+| `!` `fluig_process_cancel` | Cancela a solicitação |
 
-**Optional FluiggersWidget add-on** — not needed; the `_xml` tools above cover the same ground
-on a stock server.
+**Add-on FluiggersWidget (opcional)** — dispensável; as ferramentas `_xml` acima resolvem o mesmo
+num servidor sem add-on.
 
-| Tool | Does |
+| Ferramenta | O que faz |
 |---|---|
-| `fluig_workflow_check` | Is the widget installed? |
-| `fluig_workflow_events_get` | Read process events through the widget |
-| `!` `fluig_workflow_events_update` | Write process events through the widget |
+| `fluig_workflow_check` | O widget está instalado? |
+| `fluig_workflow_events_get` | Lê eventos de processo pelo widget |
+| `!` `fluig_workflow_events_update` | Grava eventos de processo pelo widget |
 
 **Escape hatches**
 
-| Tool | Does |
+| Ferramenta | O que faz |
 |---|---|
-| `fluig_rest_get` | Authenticated `GET` on any path |
-| `!` `fluig_rest_post` | Authenticated `POST` on any path |
+| `fluig_rest_get` | `GET` autenticado em qualquer caminho |
+| `!` `fluig_rest_post` | `POST` autenticado em qualquer caminho |
 
-## How it works
+## Como funciona por baixo
 
-| Concern | Mechanism |
+| Assunto | Mecanismo |
 |---|---|
-| Authentication | `POST /portal/api/servlet/login.do` → `JSESSIONIDSSO` cookie, reused everywhere — including the v2 REST API, which accepts it in place of OAuth |
-| Datasets | SOAP `ECMDatasetService` for list/run, REST `dataset/loadDataset\|createDataset\|editDataset` for read/write |
-| Forms | SOAP `ECMCardIndexService` |
-| Global events | REST `ecm/globalevent/*` |
-| Process definitions | REST v2 `/process-management/api/v2/processes/*`, with SOAP `WorkflowEngineService` as the fallback deploy path |
-| Process instances | SOAP `WorkflowEngineService` |
-| SQL | A throwaway custom dataset that opens the JNDI datasource server-side and runs the statement |
+| Autenticação | `POST /portal/api/servlet/login.do` → cookie `JSESSIONIDSSO`, reaproveitado em tudo — inclusive na REST v2, que o aceita em vez de OAuth |
+| Datasets | SOAP `ECMDatasetService` para listar/executar, REST `dataset/loadDataset\|createDataset\|editDataset` para ler/gravar |
+| Formulários | SOAP `ECMCardIndexService` |
+| Eventos globais | REST `ecm/globalevent/*` |
+| Definições de processo | REST v2 `/process-management/api/v2/processes/*`, com SOAP `WorkflowEngineService` como rota alternativa de deploy |
+| Solicitações | SOAP `WorkflowEngineService` |
+| SQL | Um dataset custom descartável que abre o datasource JNDI no servidor e roda a instrução |
 
-**Network resilience.** Fluig is usually behind corporate DNS, and corporate DNS lies:
-split-horizon zones hand out addresses unreachable from where you are, and one unlucky lookup
-then looks exactly like an outage. So the client resolves the address itself — last known-good,
-`dns.resolve4`, `dns.lookup`, operator seeds — TCP-probes the candidates in parallel, pins the
-first that answers, and keeps the original `Host` header so name-based virtual hosts still work.
-The good address is cached briefly and re-probed on any failure. Every call also retries with
-backoff, and only on genuinely transient errors.
+**Resiliência de rede.** Fluig quase sempre está atrás de DNS corporativo, e DNS corporativo
+mente: zonas split-horizon devolvem endereço inalcançável de onde você está, e um lookup azarado
+fica idêntico a uma queda de servidor. Então o cliente resolve o endereço ele mesmo — último IP
+bom, `dns.resolve4`, `dns.lookup`, seeds do operador —, sonda os candidatos por TCP em paralelo,
+fixa o primeiro que responde e preserva o `Host` original para o virtual host continuar
+funcionando. O endereço bom fica em cache curto e é re-sondado em qualquer falha. Toda chamada
+também tem retry com backoff, e só insiste em erro de fato transiente.
 
-## Safety
+## Segurança
 
-This server hands an LLM the ability to run SQL, publish forms and **delete process
-definitions**. Treat it accordingly.
+Este servidor entrega a um LLM a capacidade de rodar SQL, publicar formulários e **apagar
+definições de processo**. Trate com o cuidado correspondente.
 
-- **`FLUIG_READONLY=1`** hides all 18 state-changing tools. 38 remain, including everything
-  needed to read and diagnose.
-- Every destructive operation requires an explicit `confirm: true`; there is no default-yes.
-- `fluig_process_event_set_xml` and `fluig_process_import_xml` create a **new version** rather
-  than editing the live one, so `fluig_process_version_withdraw` rolls a bad deploy back.
-- The SQL query tools are `SELECT`/`WITH` only, enforced before the statement leaves the process.
-- To run SQL at all, the server writes a throwaway dataset named `${FLUIG_SCRATCH_PREFIX}*`
-  (default `ds_mcp_dbquery`, `ds_mcp_rmquery`, …). This happens in read-only mode too, because
-  it is how reading works. Anything with that prefix on your server was created here and is
-  safe to delete with `fluig_dataset_delete`.
-- Point it at a test or staging instance first.
+- **`FLUIG_READONLY=1`** esconde as 18 ferramentas de escrita. Sobram 38, incluindo tudo o que é
+  necessário para ler e diagnosticar.
+- Toda operação destrutiva exige `confirm: true` explícito; não existe sim por omissão.
+- `fluig_process_event_set_xml` e `fluig_process_import_xml` criam **nova versão** em vez de
+  mexer na que está no ar, então `fluig_process_version_withdraw` reverte um deploy ruim.
+- As ferramentas de consulta aceitam só `SELECT`/`WITH`, validado antes de a instrução sair do
+  processo.
+- Para rodar SQL, o servidor grava um dataset descartável chamado `${FLUIG_SCRATCH_PREFIX}*`
+  (por padrão `ds_mcp_dbquery`, `ds_mcp_rmquery`, …). Isso acontece em modo read-only também,
+  porque é assim que a leitura funciona. Tudo com esse prefixo no seu servidor foi criado aqui e
+  pode ser apagado com `fluig_dataset_delete`.
+- Aponte primeiro para um ambiente de teste ou homologação.
 
-See [SECURITY.md](SECURITY.md).
+Veja [SECURITY.md](SECURITY.md).
 
-## Limitations
+## Limitações
 
-- Forms are read-oriented: `fluig_form_save` replaces the entire file and event set, so read
-  with `fluig_form_full` first or you will drop what you did not send.
-- The RM datasource is frequently configured read-only. When it is, the supported write path
-  into RM is the RM DataServer API, not `fluig_rm_db_exec`.
-- The stored-statement bridge dataset (`FLUIG_RM_BRIDGE_DATASET`) is an integration convention,
-  not a platform guarantee — the name and its presence vary by installation.
-- Dataset code runs under Rhino: ES5 only, no `let`/`const`, arrow functions or template
-  literals.
-- Verified against Fluig 1.8.x. Other versions likely work but are untested.
+- Formulário é orientado a leitura: `fluig_form_save` substitui todo o conjunto de arquivos e
+  eventos, então leia com `fluig_form_full` antes ou você perde o que não mandou.
+- O datasource do RM costuma estar configurado como read-only. Quando está, o caminho suportado
+  de escrita no RM é a API DataServer do RM, não o `fluig_rm_db_exec`.
+- O dataset ponte de sentenças (`FLUIG_RM_BRIDGE_DATASET`) é convenção de integração, não
+  garantia de plataforma — o nome e a existência variam por instalação.
+- Código de dataset roda em Rhino: só ES5, sem `let`/`const`, arrow function ou template string.
+- Verificado contra Fluig 1.8.x. Outras versões provavelmente funcionam, mas não foram testadas.
 
-## Development
+## Desenvolvimento
 
 ```bash
-npm test      # unit tests, no server needed
-npm run check # syntax check every source file
-npm run list  # print the tool surface
+npm test      # testes de unidade, não precisa de servidor
+npm run check # checagem de sintaxe de todos os fontes
+npm run list  # imprime a superfície de ferramentas
 ```
 
-Tests use the built-in `node:test` runner and stay offline — the network layer is stubbed, so
-the suite runs anywhere. See [CONTRIBUTING.md](CONTRIBUTING.md).
+Os testes usam o runner nativo `node:test` e rodam offline — a camada de rede é stubada, então a
+suíte roda em qualquer lugar. Veja [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Acknowledgements
+## Créditos
 
-The dataset and form protocol was originally worked out by the community
-[`fluig-vscode-extension`](https://github.com/fluiggers/fluig-vscode-extension) project
-(Fluiggers), which is well worth using if you write Fluig code in VS Code. The process
-definition, instance lifecycle and deploy paths here were mapped independently against a live
-server.
+O protocolo de dataset e formulário foi originalmente mapeado pelo projeto comunitário
+[`fluig-vscode-extension`](https://github.com/fluiggers/fluig-vscode-extension) (Fluiggers), que
+vale muito a pena se você escreve código Fluig no VS Code. As rotas de definição de processo,
+ciclo de vida de solicitação e deploy aqui foram mapeadas de forma independente contra um
+servidor real.
 
-## Disclaimer
+## Aviso
 
-Independent, unofficial project. Not affiliated with, endorsed by, or supported by TOTVS.
-TOTVS, Fluig and RM are trademarks of TOTVS S.A. Some endpoints used here are internal or
-undocumented and may change between releases.
+Projeto independente e não oficial. Sem vínculo, endosso ou suporte da TOTVS. TOTVS, Fluig e RM
+são marcas da TOTVS S.A. Alguns endpoints usados aqui são internos ou não documentados e podem
+mudar entre versões.
 
-## License
+## Licença
 
 [MIT](LICENSE) © Rodrigo de Souza Faria

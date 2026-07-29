@@ -38,7 +38,6 @@
     "bin/",
     ".env.example",
     "README.md",
-    "README.pt-BR.md",
     "SECURITY.md",
     "LICENSE"
   ],

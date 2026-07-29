@@ -41,8 +41,10 @@ only passes on one machine is worse than no suite.
   or a bug that cost a day are the most valuable lines in the file — do not tidy them away.
 - Tool descriptions are read by language models. Say what the tool does, what it costs and what it
   breaks, in plain sentences.
-- Everything user-facing is in English: code, comments, tool descriptions, errors. `README.pt-BR.md`
-  is the translation, and it should be updated alongside `README.md`.
+- The README is in Portuguese, because Fluig is a Brazilian platform and so is everyone who runs
+  it. The code is in English — comments, tool descriptions, error messages and identifiers — so
+  that the source stays consistent with its own dependencies and with the wider Node ecosystem.
+  Keep both sides of that line where they are.
 
 ## Adding a tool
 
@@ -51,7 +53,7 @@ only passes on one machine is worse than no suite.
 2. Add the registry entry in `src/tools.js` with `write: true` if it changes server state, and a
    `confirm` property in the schema if it is destructive.
 3. The tests in `test/tools.test.js` enforce the registry invariants automatically — run them.
-4. Add the row to the tool tables in both READMEs.
+4. Add the row to the tool tables in `README.md`.
 
 ## Reporting a protocol finding
 
