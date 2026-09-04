@@ -5,6 +5,9 @@ node_modules/
 .env.*
 !.env.example
 
+# Local helper that loads a machine-specific Clariens env file.
+run-clariens-teste.sh
+
 # Output of the CLI (dumped datasets, forms, process definitions). This is your
 # employer's source code: keep it out of the repository.
 out/
