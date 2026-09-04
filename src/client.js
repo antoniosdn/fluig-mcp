@@ -138,13 +138,13 @@ export class FluigClient {
     this._live = null;
   }
 
-  /** Resilient fetch: verified address + explicit Host header + retry, re-probing on failure. */
+  /** Resilient fetch: TCP-probe the address, then call the hostname so TLS/SNI match the cert. */
   async _fetch(path, opts = {}) {
     return retry(async () => {
-      const { base } = await this._liveBase();
+      await this._liveBase();
       const headers = { ...(opts.headers || {}), Host: this._hostHeader };
       try {
-        return await fetch(`${base}${path}`, { ...opts, headers });
+        return await fetch(`${this.host}${path}`, { ...opts, headers });
       } catch (e) {
         this._bustIp(); // the pinned address may have just died — re-probe next attempt
         throw e;
