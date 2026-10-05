@@ -40,6 +40,21 @@ async function retry(fn, tries = 4, baseMs = 400) {
   throw lastErr;
 }
 
+/** A cookie idle longer than this is re-validated with a ping before being reused. */
+const SESSION_RECHECK_MS = 20 * 60_000;
+
+/**
+ * True when a response means "your session is gone" rather than a real answer.
+ *
+ * Plain Fluig answers 401 or bounces to its login page; a Fluig behind Fluig Identity
+ * (SAML) answers 200 with an auto-submitting form towards `fluigidentity.com`. Neither is
+ * an application error, so the caller should log in again and repeat the request.
+ */
+export function sessionExpired(status, text = '') {
+  if (status === 401) return true;
+  return /SAMLRequest|receiveSSORequest|fluigidentity\.com|j_security_check|name="j_username"/i.test(text);
+}
+
 const withTimeout = (p, ms) =>
   Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
 
@@ -110,6 +125,7 @@ export class FluigClient {
     this.scratchPrefix = cfg.scratchPrefix || 'ds_mcp_';
 
     this._cookie = null;
+    this._cookieAt = 0;                                           // when the cookie was last known valid
     this._soap = {};
     const u = new URL(this.host);
     this._proto = u.protocol;                                     // 'http:' | 'https:'
@@ -163,7 +179,15 @@ export class FluigClient {
    * retries before reporting an authentication problem, to avoid a false alarm.
    */
   async login() {
-    if (this._cookie) return this._cookie;
+    if (this._cookie) {
+      if (Date.now() - this._cookieAt < SESSION_RECHECK_MS) return this._cookie;
+      // Idle long enough to have expired server-side: confirm before reusing it.
+      if (await this._sessionAlive(this._cookie)) {
+        this._cookieAt = Date.now();
+        return this._cookie;
+      }
+      this._resetSession();
+    }
     let lastStatus;
     for (let attempt = 0; attempt < 3; attempt++) {
       const r = await this._fetch('/portal/api/servlet/login.do', {
@@ -175,11 +199,38 @@ export class FluigClient {
       lastStatus = r.status;
       const setCookies = typeof r.headers.getSetCookie === 'function' ? r.headers.getSetCookie() : [];
       this._cookie = setCookies.map((c) => c.split(';')[0]).join('; ');
-      if (/JSESSIONIDSSO|jwt\.token/.test(this._cookie)) return this._cookie;
+      if (/JSESSIONIDSSO|jwt\.token/.test(this._cookie)) {
+        this._cookieAt = Date.now();
+        return this._cookie;
+      }
       this._cookie = null;
       if (attempt < 2) this._bustIp();
     }
     throw new Error(`Login failed (HTTP ${lastStatus}). Check FLUIG_HOST, FLUIG_USER and FLUIG_PASS.`);
+  }
+
+  /**
+   * Drops the cached session. SOAP clients are dropped too: each one carries the old
+   * cookie in a fixed header, so they must be rebuilt after a new login.
+   */
+  _resetSession() {
+    this._cookie = null;
+    this._cookieAt = 0;
+    this._soap = {};
+  }
+
+  /** Asks the server whether `cookie` still opens a session (no redirect followed). */
+  async _sessionAlive(cookie) {
+    try {
+      const r = await this._fetch('/portal/p/api/servlet/ping', {
+        method: 'POST',
+        headers: { Cookie: cookie },
+        redirect: 'manual',
+      });
+      return r.ok && (await r.text()).includes('pong');
+    } catch {
+      return false;
+    }
   }
 
   /** True when the session is valid. */
@@ -198,12 +249,19 @@ export class FluigClient {
    * triggers an address re-probe plus retry — a different address is usually not blocked.
    */
   async _rest(path, { method = 'GET', body, form = false } = {}) {
-    const cookie = await this.login();
-    const headers = { Cookie: cookie, Accept: 'application/json' };
+    const headers = { Cookie: await this.login(), Accept: 'application/json' };
     if (body) headers['Content-Type'] = form ? 'application/x-www-form-urlencoded' : 'application/json';
+    let relogged = false;
     for (let attempt = 0; attempt < 3; attempt++) {
       const r = await this._fetch(path, { method, headers, body });
       const text = await r.text();
+      if (!relogged && sessionExpired(r.status, text)) {
+        relogged = true;
+        this._resetSession();
+        headers.Cookie = await this.login();
+        attempt--; // the expired session does not count against the filter retries
+        continue;
+      }
       try { return JSON.parse(text); } catch { /* fall through to the block detection below */ }
       const blocked = /FortiGuard|Web Filter Violation|Web Page Blocked/i.test(text);
       if (blocked && attempt < 2) { this._bustIp(); continue; }
@@ -219,12 +277,17 @@ export class FluigClient {
    * @returns {Promise<{status:number, text:string, contentType:string}>}
    */
   async _restRaw(path, { method = 'GET', body, contentType, accept } = {}) {
-    const cookie = await this.login();
-    const headers = { Cookie: cookie };
+    const headers = { Cookie: await this.login() };
     if (accept) headers.Accept = accept;
     if (body !== undefined && contentType) headers['Content-Type'] = contentType;
-    const r = await this._fetch(path, { method, headers, body });
-    const text = await r.text();
+    let r = await this._fetch(path, { method, headers, body });
+    let text = await r.text();
+    if (sessionExpired(r.status, text)) {
+      this._resetSession();
+      headers.Cookie = await this.login();
+      r = await this._fetch(path, { method, headers, body });
+      text = await r.text();
+    }
     return { status: r.status, text, contentType: r.headers.get('content-type') || '' };
   }
 

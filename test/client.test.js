@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { FluigClient } from '../src/client.js';
+import { FluigClient, sessionExpired } from '../src/client.js';
 import { loadConfig } from '../src/config.js';
 
 /** A client wired to a host that is never contacted: every test here stays offline. */
@@ -234,4 +234,77 @@ test('card data converts to and from the StringArrayArray shape', () => {
     c._saaToRows({ item: [{ item: [{ $value: 'a' }, 'b'] }] }),
     [['a', 'b']],
   );
+});
+
+// --- Session expiry ---------------------------------------------------------
+
+const SAML_PAGE = '<form action="https://x.fluigidentity.com/cloudpass/SPInitPost/receiveSSORequest/1">'
+  + '<input type="hidden" name="SAMLRequest" value="abc"/></form>';
+
+/** Minimal stand-in for a fetch Response. */
+function fakeResponse(status, text) {
+  return { status, ok: status >= 200 && status < 300, text: async () => text, headers: new Map() };
+}
+
+test('session expiry is recognised from 401, the SAML bounce and the login page', () => {
+  assert.equal(sessionExpired(401, ''), true);
+  assert.equal(sessionExpired(200, SAML_PAGE), true);
+  assert.equal(sessionExpired(200, '<form action="j_security_check"><input name="j_username"></form>'), true);
+  assert.equal(sessionExpired(200, '{"content":[]}'), false);
+  assert.equal(sessionExpired(403, 'FortiGuard Web Filter Violation'), false);
+});
+
+test('a REST call that hits an expired session logs in again and repeats once', async () => {
+  const c = makeClient();
+  let logins = 0;
+  c.login = async () => `JSESSIONIDSSO=s${++logins}`;
+  c._resetSession = () => { c._cookie = null; };
+  const seen = [];
+  const answers = [fakeResponse(200, SAML_PAGE), fakeResponse(200, '{"ok":true}')];
+  c._fetch = async (_path, opts) => { seen.push(opts.headers.Cookie); return answers.shift(); };
+
+  assert.deepEqual(await c._rest('/api/x'), { ok: true });
+  assert.equal(logins, 2);
+  assert.deepEqual(seen, ['JSESSIONIDSSO=s1', 'JSESSIONIDSSO=s2']);
+});
+
+test('a session that stays expired after the new login is reported, not looped on', async () => {
+  const c = makeClient();
+  let logins = 0;
+  c.login = async () => `JSESSIONIDSSO=s${++logins}`;
+  c._resetSession = () => {};
+  let calls = 0;
+  c._fetch = async () => { calls++; return fakeResponse(200, SAML_PAGE); };
+
+  const r = await c._rest('/api/x');
+  assert.equal(r._status, 200);
+  assert.match(r._raw, /SAMLRequest/);
+  assert.equal(logins, 2);
+  assert.ok(calls <= 4, `too many calls: ${calls}`);
+});
+
+test('the raw REST call also logs in again once on an expired session', async () => {
+  const c = makeClient();
+  let logins = 0;
+  c.login = async () => `JSESSIONIDSSO=s${++logins}`;
+  c._resetSession = () => {};
+  const answers = [fakeResponse(401, ''), fakeResponse(200, '<xml/>')];
+  c._fetch = async () => answers.shift();
+
+  const r = await c._restRaw('/api/x', { accept: 'application/xml' });
+  assert.equal(r.status, 200);
+  assert.equal(r.text, '<xml/>');
+  assert.equal(logins, 2);
+});
+
+test('a stale cookie is re-validated and replaced when the ping fails', async () => {
+  const c = makeClient();
+  c._cookie = 'JSESSIONIDSSO=old';
+  c._cookieAt = Date.now() - 60 * 60_000;
+  c._soap = { '/webdesk/X?wsdl': {} };
+  c._sessionAlive = async () => false;
+  c._fetch = async () => ({ status: 200, headers: { getSetCookie: () => ['JSESSIONIDSSO=new; Path=/'] } });
+
+  assert.equal(await c.login(), 'JSESSIONIDSSO=new');
+  assert.deepEqual(c._soap, {});
 });
