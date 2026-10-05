@@ -30,3 +30,6 @@ Thumbs.db
 .vscode/
 coverage/
 *.tgz
+
+# Scripts locais da Clariens que sobem o servidor lendo as senhas de arquivos fora do repo.
+run-clariens-*.sh
