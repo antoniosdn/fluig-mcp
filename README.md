@@ -177,11 +177,15 @@ Para reportar vulnerabilidade, veja [SECURITY.md](SECURITY.md).
 `fluig_rm_query` · **!** `fluig_rm_db_query` · **!** `fluig_rm_db_exec` ·
 **!** `fluig_rm_dataserver_schema` · **!** `fluig_rm_save_record` · **!** `fluig_service_list`
 
-**Agendador** (4) · **Eventos globais** (2) · **Diagnóstico** (7)
+**Agendador** (4) · **Eventos globais** (2) · **Diagnóstico** (8)
 `fluig_jobs_list` · **!** `fluig_job_add` · **!** `fluig_job_delete` · **!** `fluig_job_run` ·
 `fluig_globalevent_list` · **!** `fluig_globalevent_save` · `fluig_ping` · `fluig_version` ·
 `fluig_session_reset` · `fluig_user_replacements` · `fluig_rest_get` · **!** `fluig_rest_post` ·
-**!** `fluig_db_query`
+**!** `fluig_db_query` · `fluig_log_search`
+
+`fluig_log_search` lê o log do servidor pela widget de leitura de log instalada no Fluig
+(padrão `/ascendra_log_viewer/api/logs`; outra base em `FLUIG_LOG_API`) e devolve o resultado
+resumido: linhas cortadas, repetidas agrupadas e total limitado a cerca de 30 mil caracteres.
 
 Descrição completa de cada uma: `node server.js --list`.
 

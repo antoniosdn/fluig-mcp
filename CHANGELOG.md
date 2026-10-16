@@ -3,6 +3,16 @@
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/);
 versionamento [SemVer](https://semver.org/lang/pt-BR/).
 
+## [Não lançado]
+
+### Adicionado
+
+- `fluig_log_search`: busca resumida no log do servidor pela widget de leitura de log
+  (`FLUIG_LOG_API`, padrão `/ascendra_log_viewer/api/logs`). Corta linhas longas, agrupa
+  ocorrências que só mudam data, id ou número, limita o total e, com `contexto`, devolve as
+  linhas vizinhas de cada ocorrência. Uma busca que voltava com 400 mil caracteres pelo
+  `fluig_rest_get` passa a voltar com menos de 3 mil.
+
 ## [1.0.0] — 2026-09-24
 
 Primeira versão pública. 97 ferramentas, dois ambientes, e as armadilhas do produto embutidas

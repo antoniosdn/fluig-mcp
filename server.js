@@ -14,6 +14,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { loadConfig, ambientesConfigurados } from './src/config.js';
 import { FluigClient } from './src/client.js';
+import { LOG_API_PADRAO, normalizarParametros, caminhoApi, resumirLog } from './src/logsearch.js';
 import { readFileSync } from 'node:fs';
 
 const VERSAO = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version;
@@ -904,6 +905,31 @@ const TOOLS = [
     handler: async ({ processInstanceId, confirm }) => {
       const r = await client.processErrorLog(processInstanceId, { confirm: !!confirm });
       return { columns: r.columns, total: r.values.length, values: r.values.slice(0, 50) };
+    },
+  },
+  {
+    name: 'fluig_log_search',
+    description: 'Busca RESUMIDA no log do servidor (server.log e outros), pela widget de leitura de log '
+      + `instalada no Fluig (rota ${LOG_API_PADRAO}; outra base em FLUIG_LOG_API). Corta linhas longas, `
+      + 'agrupa ocorrências repetidas (mesma linha mudando só data, id ou número) e limita o total — use no lugar '
+      + 'de fluig_rest_get na API de log, que devolve centenas de milhares de caracteres. Sem contexto, a widget '
+      + 'filtra o arquivo inteiro; com contexto>0, lê só as últimas `janela` linhas e devolve as vizinhas de cada '
+      + 'ocorrência. Logs têm dados pessoais: não copiar para documentação.',
+    inputSchema: S({
+      filtro: str('texto a procurar (sem diferenciar maiúsculas); vazio = últimas linhas'),
+      arquivo: str('arquivo de log (padrão server.log; dias anteriores: server.log.AAAA-MM-DD.gz)'),
+      janela: num('linhas lidas do fim do arquivo (padrão 5000, máx. 20000); sem contexto, é o máximo de ocorrências que a widget devolve'),
+      max: num('ocorrências/grupos devolvidos, os mais recentes (padrão 20, máx. 100)'),
+      charsLinha: num('caracteres por linha antes de cortar (padrão 300, máx. 2000)'),
+      contexto: num('linhas antes e depois de cada ocorrência (padrão 0, máx. 10)'),
+      agrupar: { type: 'boolean', description: 'agrupar linhas repetidas (padrão true; ignorado com contexto)' },
+      semStack: { type: 'boolean', description: 'ignorar linhas de stack trace ("at ...", "Caused by:")' },
+      diferenciarCaixa: { type: 'boolean', description: 'diferenciar maiúsculas (ex.: "ERROR" sem pegar "ErrorLogService")' },
+    }),
+    handler: async (args) => {
+      const p = normalizarParametros(args);
+      const base = process.env.FLUIG_LOG_API || LOG_API_PADRAO;
+      return resumirLog(await client.restGet(caminhoApi(base, p)), p);
     },
   },
   {
