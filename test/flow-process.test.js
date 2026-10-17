@@ -127,3 +127,35 @@ test('elemento sem dígitos finais no id → erro; sequence repetido → W_LEITO
 test('texto que não é .process → erro', () => {
   assert.throws(() => lerProcess('<nada/>'));
 });
+
+test('fluxo automático com gêmea manual é descartado; sem gêmea fica como antes', () => {
+  const { texto, ids } = montarProcessoSintetico({ gateway: false });
+  const F = carregarFluiggers();
+  const fluxo = F.parseProcess(texto).flows.find((f) => f.attributes.sourceRef === ids.humana && f.attributes.targetRef === ids.fim);
+  assert.ok(fluxo);
+  const seqDe = (id) => `s${/(\d+)$/.exec(id)[1]}`;
+  const rotulo = `ligacao ${seqDe(ids.humana)}→${seqDe(ids.fim)}`;
+
+  // sem gêmea: a automática fica como ligação comum, com o aviso antigo
+  const auto = F.editor.patchProcess(texto, fluxo.id, { fluxoAutomatico: 'true' }).text;
+  assert.match(auto, /fluxoAutomatico="true"/);
+  const so = lerProcess(auto);
+  assert.equal(so.spec.ligacoes.length, 2);
+  assert.ok(so.avisos.some((a) => a.codigo === 'W_LEITOR_FLUXO_AUTOMATICO' && a.ref === rotulo), JSON.stringify(so.avisos));
+  assert.ok(!codigos(so.avisos).includes('W_LEITOR_FLUXO_AUTOMATICO_DESCARTADO'));
+
+  // com gêmea manual (mesma origem e destino): o vendor recusa criar o fluxo repetido, então a gêmea
+  // automática entra por texto (linha nova de SequenceFlow); a manual original fica sem marca
+  const linha = /^.*<bpmn2:SequenceFlow id="flow\d+"[^\n]*sourceRef="task2" targetRef="endevent4"[^\n]*$/m.exec(texto)[0];
+  const gemeaAuto = linha.replace(/id="flow\d+"/, 'id="flow9"').replace(/\/>\s*$/, ' fluxoAutomatico="true"/>');
+  const comGemea = texto.replace(linha, `${linha}\n${gemeaAuto}`);
+  assert.match(comGemea, /id="flow9"[^\n]*fluxoAutomatico="true"/);
+  const r = lerProcess(comGemea);
+  assert.equal(r.spec.ligacoes.length, 2);
+  assert.equal(r.origem.linkSequences.length, 2);
+  const w = r.avisos.filter((a) => a.codigo === 'W_LEITOR_FLUXO_AUTOMATICO_DESCARTADO');
+  assert.equal(w.length, 1);
+  assert.equal(w[0].ref, rotulo);
+  assert.ok(!codigos(r.avisos).includes('W_LEITOR_FLUXO_AUTOMATICO'));
+  assert.equal(r.spec.ligacoes.filter((l) => l.de === seqDe(ids.humana) && l.para === seqDe(ids.fim)).length, 1);
+});

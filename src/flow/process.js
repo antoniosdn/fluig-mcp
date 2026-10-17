@@ -395,6 +395,23 @@ export function lerProcess(texto) {
     const para = sequenciaDoId(fa.targetRef);
     const rot = `s${de === null ? '?' : de}→s${para === null ? '?' : para}`;
     const ref = `ligacao ${rot}`;
+    if (aparar(fa.fluxoAutomatico).toLowerCase() === 'true') {
+      const gemea = p.flows.some(
+        (o) =>
+          o !== f &&
+          aparar(o.attributes.fluxoAutomatico).toLowerCase() !== 'true' &&
+          sequenciaDoId(o.attributes.sourceRef) === de &&
+          sequenciaDoId(o.attributes.targetRef) === para
+      );
+      if (gemea) {
+        avi(
+          'W_LEITOR_FLUXO_AUTOMATICO_DESCARTADO',
+          `A ligação ${rot} é um fluxo automático por prazo, fora da v1, ao lado da ligação manual ${rot}; foi descartada e a manual ficou.`,
+          ref
+        );
+        continue;
+      }
+    }
     const linkSeq = sequenciaDoId(f.id);
     const retorno = aparar(fa.permiteRetorno).toLowerCase() === 'true';
 

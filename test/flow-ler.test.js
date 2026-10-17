@@ -571,3 +571,37 @@ test('defaultLink fora de gateway exclusivo: aviso e ignora', () => {
   assert.deepStrictEqual(spec.ligacoes[0], { de: 's1', para: 's2' });
   assert.ok(temItem(avisos, 'W_LEITOR_PADRAO_FORA_GATEWAY', 'ligacao s1→s2'));
 });
+
+test('fluxo automático com gêmea manual (mesma origem e destino) é descartado; sem gêmea fica como antes', () => {
+  const estados = [ini, hum(2), hum(3), fim];
+  const { spec, origem, avisos } = lerXmlProcesso(
+    montarXml({
+      estados,
+      ligacoes: [
+        { de: 1, para: 2, seq: 10 },
+        { de: 2, para: 3, seq: 11, auto: true },
+        { de: 2, para: 3, seq: 12 },
+        { de: 3, para: 99, seq: 13 },
+      ],
+    })
+  );
+  assert.deepStrictEqual(spec.ligacoes, [
+    { de: 's1', para: 's2' },
+    { de: 's2', para: 's3' },
+    { de: 's3', para: 's99' },
+  ]);
+  assert.deepStrictEqual(origem.linkSequences, [10, 12, 13]);
+  assert.equal(contar(avisos, 'W_LEITOR_FLUXO_AUTOMATICO_DESCARTADO'), 1);
+  assert.ok(temItem(avisos, 'W_LEITOR_FLUXO_AUTOMATICO_DESCARTADO', 'ligacao s2→s3'));
+  assert.equal(contar(avisos, 'W_LEITOR_FLUXO_AUTOMATICO'), 0);
+  assert.match(avisos.find((a) => a.codigo === 'W_LEITOR_FLUXO_AUTOMATICO_DESCARTADO').mensagem, /fora da v1, ao lado da ligação manual s2→s3; foi descartada e a manual ficou/);
+
+  // automática sozinha: comportamento antigo (ligação comum + aviso antigo)
+  const so = lerXmlProcesso(
+    montarXml({ estados, ligacoes: [{ de: 1, para: 2, seq: 10 }, { de: 2, para: 3, seq: 11, auto: true }, { de: 3, para: 99, seq: 13 }] })
+  );
+  assert.equal(so.spec.ligacoes.length, 3);
+  assert.deepStrictEqual(so.origem.linkSequences, [10, 11, 13]);
+  assert.ok(temItem(so.avisos, 'W_LEITOR_FLUXO_AUTOMATICO', 'ligacao s2→s3'));
+  assert.equal(contar(so.avisos, 'W_LEITOR_FLUXO_AUTOMATICO_DESCARTADO'), 0);
+});

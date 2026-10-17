@@ -249,3 +249,20 @@ test('formatarCobertura: cabeçalho, uma linha por XML e o total', async () => {
   assert.match(linhas[4], /^TOTAL\s+3 xml\s+24\/24\s+24\/24\s+7\/7\s+3\/3\s+6\/9\s+/);
   assert.match(linhas[4], /igual 2; erro 1/);
 });
+
+test('fluxo automático ao lado da manual (mesma origem e destino): descartado, resultado igual com E6', async () => {
+  const original = fixture('medicao_contrato');
+  // gêmea manual de L14 (s5→s11, automática): ProcessLink novo com linkSequence 90
+  const gemea =
+    '<ProcessLink><processLinkPK><companyId>1</companyId><processId>medicao_contrato</processId><version>1</version>' +
+    '<linkSequence>90</linkSequence></processLinkPK><returnPermited>false</returnPermited>' +
+    '<initialStateSequence>5</initialStateSequence><finalStateSequence>11</finalStateSequence>' +
+    '<automaticLink>false</automaticLink><defaultLink>false</defaultLink><type>0</type></ProcessLink>';
+  const xml = trocar(original, /(<linkSequence>14<\/linkSequence>\s*<\/processLinkPK>[\s\S]*?<\/ProcessLink>)/, `$1${gemea}`);
+  const r = await compararIdaEVolta(xml, { versaoAlvo: '1.8.2' });
+  assert.equal(r.resultado, 'igual', JSON.stringify([r.diferencas, r.motivos]));
+  assert.ok(r.exclusoes.some((e) => e.startsWith('E6: fluxo automático por prazo L14 ao lado da manual L90')), JSON.stringify(r.exclusoes));
+  assert.ok(!r.exclusoes.some((e) => e.startsWith('E4:')));
+  assert.equal(r.cobertura.ligacoes.total, 9);
+  assert.equal(r.cobertura.ligacoes.v1, 8);
+});

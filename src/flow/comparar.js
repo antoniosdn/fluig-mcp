@@ -143,6 +143,24 @@ function indexar(xml) {
   return idx;
 }
 
+/**
+ * Ligações automáticas por prazo que têm gêmea manual (mesma origem e mesmo destino, `automaticLink` falso).
+ * O leitor as descarta; saem da comparação como elemento inteiro. Devolve Map(seq da automática -> seq da manual).
+ */
+function automaticasDescartadas(idx) {
+  const descartadas = new Map();
+  const ehAuto = (no) => aparar(cru(no, 'automaticLink')).toLowerCase() === 'true';
+  const par = (no) => `${inteiro(textoDe(no, 'initialStateSequence'))}\u0000${inteiro(textoDe(no, 'finalStateSequence'))}`;
+  const manualPorPar = new Map();
+  for (const [seq, no] of idx.ligacoes) {
+    if (!ehAuto(no) && !manualPorPar.has(par(no))) manualPorPar.set(par(no), seq);
+  }
+  for (const [seq, no] of idx.ligacoes) {
+    if (ehAuto(no) && manualPorPar.has(par(no))) descartadas.set(seq, manualPorPar.get(par(no)));
+  }
+  return descartadas;
+}
+
 /* ------------------------------------------------------------------ */
 /* Projeção                                                            */
 /* ------------------------------------------------------------------ */
@@ -194,7 +212,11 @@ function projetarIndice(idx, { versaoAlvo, semProcessId, excluir }) {
     estados.set(chave, projetarCampos(no, ehCaptura ? CAMPOS_CAPTURA : CAMPOS_ESTADO, chave, excluir));
   }
   const ligacoes = new Map();
-  for (const [seq, no] of idx.ligacoes) ligacoes.set(`L${seq}`, projetarCampos(no, CAMPOS_LIGACAO, `L${seq}`, excluir));
+  const descartadas = automaticasDescartadas(idx);
+  for (const [seq, no] of idx.ligacoes) {
+    if (descartadas.has(seq)) continue;
+    ligacoes.set(`L${seq}`, projetarCampos(no, CAMPOS_LIGACAO, `L${seq}`, excluir));
+  }
   const condicoes = new Map();
   for (const [k, no] of idx.condicoes) {
     const chave = `C${k}`;
@@ -278,6 +300,7 @@ export function compararXml(original, gerado, opcoes = {}) {
 function exclusoesDoOriginal(idx) {
   const excluir = new Set();
   const textos = [];
+  const descartadas = automaticasDescartadas(idx);
   for (const [seq, no] of idx.estados) {
     const bpmn = aparar(cru(no, 'bpmnType'));
     if (bpmn === '43') continue;
@@ -308,7 +331,9 @@ function exclusoesDoOriginal(idx) {
     }
   }
   for (const [seq, no] of idx.ligacoes) {
-    if (aparar(cru(no, 'automaticLink')).toLowerCase() === 'true') {
+    if (descartadas.has(seq)) {
+      textos.push(`E6: fluxo automático por prazo L${seq} ao lado da manual L${descartadas.get(seq)}, descartado (fora da v1)`);
+    } else if (aparar(cru(no, 'automaticLink')).toLowerCase() === 'true') {
       textos.push(`E4: fluxo automático por prazo em L${seq} (automaticLink fora da projeção)`);
     }
   }

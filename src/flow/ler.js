@@ -497,6 +497,23 @@ export function lerXmlProcesso(xml) {
     const para = inteiro(textoDe(nl, 'finalStateSequence'));
     const rot = `s${Number.isNaN(de) ? '?' : de}→s${Number.isNaN(para) ? '?' : para}`;
     const ref = `ligacao ${rot}`;
+    if (aparar(textoDe(nl, 'automaticLink')).toLowerCase() === 'true') {
+      const gemea = nosLigacao.some(
+        (o) =>
+          o !== nl &&
+          aparar(textoDe(o, 'automaticLink')).toLowerCase() !== 'true' &&
+          inteiro(textoDe(o, 'initialStateSequence')) === de &&
+          inteiro(textoDe(o, 'finalStateSequence')) === para
+      );
+      if (gemea) {
+        avi(
+          'W_LEITOR_FLUXO_AUTOMATICO_DESCARTADO',
+          `A ligação ${rot} é um fluxo automático por prazo, fora da v1, ao lado da ligação manual ${rot}; foi descartada e a manual ficou.`,
+          ref
+        );
+        continue;
+      }
+    }
     const linkSeq = inteiro(textoDe(filho(nl, 'processLinkPK'), 'linkSequence'));
     const linkSeqValor = Number.isInteger(linkSeq) ? linkSeq : null;
     const retorno = aparar(textoDe(nl, 'returnPermited')).toLowerCase() === 'true';

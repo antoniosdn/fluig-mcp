@@ -580,3 +580,13 @@ test('conferirNoServidor: papel inexistente, campo inexistente, lookup lançando
   assert.deepEqual(await conferirNoServidor({ atividades: 'x' }, bom), { ok: true, erros: [], avisos: [] });
   assert.deepEqual(await conferirNoServidor(null, bom), { ok: true, erros: [], avisos: [] });
 });
+
+test('E_LIGACAO_DUPLICADA: duas ligações iguais escritas na spec continuam sendo erro', async () => {
+  const r = await v(specBase());
+  assert.equal(temProblema(r, 'E_LIGACAO_DUPLICADA'), false);
+  const dup = specBase();
+  dup.ligacoes.push({ ...dup.ligacoes[0] });
+  const rd = await v(dup);
+  assert.equal(rd.ok, false);
+  assert.equal(temProblema(rd, 'E_LIGACAO_DUPLICADA'), true, JSON.stringify(rd.erros));
+});
