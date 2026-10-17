@@ -201,6 +201,29 @@ existente como spec, com `origem` para gerar de novo sem renumerar; `deploy` pub
 
 Descrição completa de cada uma: `node server.js --list`.
 
+## Regenerar ECM30 e SVG de um `.process`
+
+Dado `<projeto>/workflow/diagrams/<nome>.process`, o comando grava `workflow/.resources/<nome>.ecm30.xml`
+e `<nome>.processimage.svg`, como a extensão Fluiggers faz ao salvar, sem VS Code nem Eclipse. Não
+precisa de credencial do Fluig.
+
+```
+fluig-mcp regenerar <arquivo.process> [1.8.2|2.0] [--proprio | --oficial] [--nao-gravar] [--cache <pasta>] [--java <caminho>]
+```
+
+- **Requisitos:** Java 8 ou superior (`FLUIG_MCP_JAVA`, `JAVA_HOME` ou `java` no PATH) e o conversor
+  instalado no cache (`~/.fluig-mcp`, ou `FLUIG_MCP_CACHE`). O comando confere o SHA-256 do cache a cada execução.
+- **Instalar o conversor** (uma vez por máquina), de uma destas formas:
+  - `fluig-mcp instalar-conversor --de <pasta plugins do Studio>` (aceita a raiz do Eclipse);
+  - `fluig-mcp instalar-conversor --de <studio.zip>`;
+  - `fluig-mcp instalar-conversor --baixar 1.8.2.0` (baixa os 13 JARs; só aceita arquivo cujo tamanho e SHA-256 batam com a tabela).
+- **Licença:** os JARs são da TOTVS e da Eclipse Foundation (EPL) e ficam só na sua máquina; este
+  repositório não os redistribui. O download com `--baixar` é feito por quem roda o comando, sob esses termos.
+- **Plano B:** sem conversor instalado (ou com `--proprio`), o ECM30 sai do gerador próprio, com o aviso
+  `W_ECM30_NAO_OFICIAL`. Ele recusa processo cuja leitura perderia comportamento (atribuição fora da v1,
+  tipo de atividade fora da v1 etc.). O `.process` nunca é alterado; o ECM30 anterior vai para
+  `.resources/.backups/` antes de ser trocado.
+
 ## Armadilhas conhecidas do Fluig
 
 Cada item abaixo foi medido contra um servidor real e está embutido no código — a ferramenta

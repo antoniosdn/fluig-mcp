@@ -7,7 +7,7 @@ import { cpSync, mkdtempSync, readFileSync, readdirSync, rmSync, unlinkSync, wri
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { carregarFluiggers, DIR_VENDOR, HASHES_VENDOR, MODULOS_RECORTE } from '../src/flow/fluiggers.js';
+import { carregarFluiggers, conferirPonte, DIR_PONTE, DIR_VENDOR, HASHES_PONTE, HASHES_VENDOR, MODULOS_RECORTE } from '../src/flow/fluiggers.js';
 
 const raiz = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -120,8 +120,45 @@ test('PROCEDENCIA.md cita os hashes e os ids do recorte', () => {
     'LICENSE.txt',
     'PROCEDENCIA.md',
     'creation-template.process.gz.b64',
+    'ecm30-bridge',
     'modulos.cjs',
   ]);
+});
+
+test('ponte ECM30: conferirPonte() ok e devolve classes/; byte trocado é recusado', () => {
+  assert.equal(Object.keys(HASHES_PONTE).length, 11);
+  assert.equal(conferirPonte(), join(DIR_PONTE, 'classes'));
+  const tmp = mkdtempSync(join(tmpdir(), 'ponte-'));
+  try {
+    cpSync(DIR_PONTE, tmp, { recursive: true });
+    assert.equal(conferirPonte({ dir: tmp }), join(tmp, 'classes'));
+    const arq = join(tmp, 'classes', 'Ecm30Bridge.class');
+    const b = readFileSync(arq);
+    b[b.length - 1] ^= 1;
+    writeFileSync(arq, b);
+    assert.throws(
+      () => conferirPonte({ dir: tmp }),
+      (e) => e.message.includes('classes/Ecm30Bridge.class') && e.message.includes(HASHES_PONTE['classes/Ecm30Bridge.class']) && e.message.includes('Regenere')
+    );
+    unlinkSync(arq);
+    assert.throws(() => conferirPonte({ dir: tmp }), (e) => e.message.includes('Ecm30Bridge.class') && e.message.includes('ausente'));
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('PROCEDENCIA.md cita os 11 hashes da ponte, sem JAR no vendor', () => {
+  const doc = readFileSync(join(DIR_VENDOR, 'PROCEDENCIA.md'), 'utf8');
+  for (const [nome, h] of Object.entries(HASHES_PONTE)) {
+    assert.ok(doc.includes(h), nome);
+    assert.ok(doc.includes(`\`${nome}\``), nome);
+  }
+  const arquivos = [];
+  const andar = (d) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) (e.isDirectory() ? andar(join(d, e.name)) : arquivos.push(e.name));
+  };
+  andar(DIR_VENDOR);
+  assert.deepEqual(arquivos.filter((n) => /\.jar$/i.test(n)), []);
 });
 
 const extDir = process.env.FLUIGGERS_EXT_DIR;

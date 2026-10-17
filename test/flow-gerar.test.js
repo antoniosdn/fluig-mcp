@@ -1031,3 +1031,61 @@ test('padrao: grupo OU com uma ligação padrão marca o ProcessLink como padrã
   assert.equal(textoDe(links[2], 'defaultLink'), 'true');
   assert.equal(bloco(parseXml(r2.xml), 'ConditionProcessState').filhos.length, 2);
 });
+
+/* ------------------------------------------------------------------ */
+/* eventos (passo 5.2): scripts do processo no bloco WorkflowProcessEvent */
+/* ------------------------------------------------------------------ */
+
+test('eventos: dois scripts viram WorkflowProcessEvent, relidos como I_SCRIPTS, com o código escapado', async () => {
+  const codigoB = 'function beforeTaskSave(a, b) {\r\n  var x = "<&>\'";\n}\n';
+  const codigoA = '// afterProcessCreate\nvar y = 1;';
+  for (const versao of VERSOES) {
+    const r = await gerarXmlProcesso(S1(), {
+      versaoAlvo: versao,
+      eventos: [
+        { id: 'beforeTaskSave', codigo: codigoB },
+        { id: 'afterProcessCreate', codigo: codigoA },
+      ],
+    });
+    assert.equal(r.ok, true, JSON.stringify(r.erros));
+    const lido = lerXmlProcesso(r.xml);
+    const scripts = lido.ignorados.filter((i) => i.codigo === 'I_SCRIPTS');
+    assert.equal(scripts.length, 1);
+    assert.match(scripts[0].mensagem, /2 scripts de evento ignorados: afterProcessCreate, beforeTaskSave\./);
+    const eventos = bloco(parseXml(r.xml), 'WorkflowProcessEvent').filhos;
+    assert.equal(eventos.length, 2);
+    assert.deepEqual(eventos.map((e) => textoDe(filho(e, 'workflowProcessEventPK'), 'eventId')), ['afterProcessCreate', 'beforeTaskSave']);
+    const pk = filho(eventos[1], 'workflowProcessEventPK');
+    assert.equal(textoDe(pk, 'processId'), 'proc_min');
+    assert.equal(textoDe(pk, 'companyId'), '1');
+    assert.equal(textoDe(pk, 'version'), '1');
+    assert.equal(textoDe(eventos[1], 'eventDescription'), codigoB);
+    assert.ok(r.xml.includes(`<eventDescription>${escaparXml(codigoB)}</eventDescription>`));
+    assert.ok(r.xml.includes('&#xd;'), 'CR escapado');
+  }
+});
+
+test('eventos: sem eventos (ou lista vazia) a saída é byte a byte a de hoje', async () => {
+  for (const versao of VERSOES) {
+    const base = await gerarXmlProcesso(S2(versao === '2.0'), { versaoAlvo: versao });
+    const vazio = await gerarXmlProcesso(S2(versao === '2.0'), { versaoAlvo: versao, eventos: [] });
+    const indef = await gerarXmlProcesso(S2(versao === '2.0'), { versaoAlvo: versao, eventos: undefined });
+    assert.equal(vazio.xml, base.xml);
+    assert.equal(indef.xml, base.xml);
+    assert.ok(!base.xml.includes('WorkflowProcessEvent'));
+  }
+});
+
+test('eventos: id inválido, repetido ou sem código → E_EVENTO_ID', async () => {
+  for (const eventos of [
+    [{ id: '1abc', codigo: 'x' }],
+    [{ id: 'com espaço', codigo: 'x' }],
+    [{ id: 'a-b', codigo: 'x' }],
+    [{ id: 'ok', codigo: 'x' }, { id: 'ok', codigo: 'y' }],
+    [{ id: 'semCodigo' }],
+  ]) {
+    const r = await gerarXmlProcesso(S1(), { versaoAlvo: '1.8.2', eventos });
+    assert.equal(r.ok, false);
+    assert.ok(codigos(r.erros).includes('E_EVENTO_ID'), JSON.stringify(r.erros));
+  }
+});

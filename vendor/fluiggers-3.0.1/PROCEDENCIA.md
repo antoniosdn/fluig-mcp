@@ -58,6 +58,28 @@ Cada módulo é o texto exato do bundle. Offset em bytes (UTF-8) dentro de `dist
 | `93356` | 1984970 | 1282 | `ad996d146065fb95a9c6e290d33ffd168b7253d7a40e34bf3011a77cffe9673d` |
 | `96396` | 1938727 | 850 | `9e6467369939d33d9c781ae9741ff0ea865d89bd6ae3727c953bb47ce585a95a` |
 
+## Ponte ECM30 (`ecm30-bridge/`)
+
+Cópia byte a byte de `tools/ecm30-bridge/` da extensão 3.0.1 (MIT, mesmo `LICENSE.txt`). É a ponte Java que roda o conversor oficial do Fluig Studio (`Ecm30Bridge`) para gerar o ECM30 a partir do `.process`. Os arquivos `.java` entram para revisão; as `.class` (Java 8, class file 52.0) entram prontas, porque quem tem só JRE não tem `javac`.
+
+Os três "shims" (`org/eclipse/core/resources/IFile`, `org/eclipse/graphiti/ui/internal/services/GraphitiUiInternal` e `IEmfService`) são declarações mínimas, de uma linha cada, com o nome de interfaces do Eclipse, escritas pela Fluiggers para não carregar o Eclipse UI. Não copiam código do Eclipse.
+
+| Arquivo (relativo a `ecm30-bridge/`) | SHA-256 |
+|---|---|
+| `Ecm30Bridge.java` | `88541f9a1eff8a2214dc9b665eba93fcc54af6253295fc16404932050a7e9d17` |
+| `com/fluig/bpm/utils/ProjectUtils.java` | `51af021b943e5a5a23369c9599b136a8ba16d36725a33cf3bfadd12d204499f7` |
+| `org/eclipse/core/resources/IFile.java` | `5c481ef84b0d75e68fd2addda398e5c252811d904e84be9b71a9e0ce4b125e12` |
+| `org/eclipse/graphiti/ui/internal/services/GraphitiUiInternal.java` | `c987ee92b377cc6ccd3202852c32ca92d3d8bb7a31a415492ed84b3ad0fc1e3c` |
+| `org/eclipse/graphiti/ui/internal/services/IEmfService.java` | `4adc165970be12d9dcb6bfdd9d677ecf86ab1b765d32a9b913989c401747c38f` |
+| `classes/Ecm30Bridge.class` | `ceced0595a9ff2b8a5ddb32938c3e45b2c09b4c57bbab1cd39ec42febd33c0b0` |
+| `classes/Ecm30Bridge$1.class` | `5b6bdb4912f9f6ed16fbfbf71433fd1b4f5e9faab1e589f8b7d8bf391373a51f` |
+| `classes/com/fluig/bpm/utils/ProjectUtils.class` | `59f8c90d38e225a68868e93d26a0a80d7a41f9852ceddc60307735d7273b0660` |
+| `classes/org/eclipse/core/resources/IFile.class` | `81f6696c41e21b03f58095c2b50b7c5b4589ed8b9462bd3fee17a420ecfcd21d` |
+| `classes/org/eclipse/graphiti/ui/internal/services/GraphitiUiInternal.class` | `7913815bb5abac959f7b9307f777148bc2a634dd8024fa69e798593930011dc0` |
+| `classes/org/eclipse/graphiti/ui/internal/services/IEmfService.class` | `75f4fe7657dd8c44b71cda63c9ca0b1c82dc0221acc6bf69218bde6447f0d10e` |
+
+Os JARs do Studio (TOTVS e Eclipse) e o `xstream.jar` **nunca** entram neste repositório: ficam no cache local do conversor (`fluig-mcp instalar-conversor`).
+
 ## Regenerar / conferir
 
 ```
@@ -65,4 +87,4 @@ node scripts/vendor-fluiggers.mjs <pasta da extensão 3.0.1>            # regrav
 node scripts/vendor-fluiggers.mjs <pasta da extensão 3.0.1> --conferir # compara byte a byte
 ```
 
-Não editar estes arquivos à mão: o carregador (`src/flow/fluiggers.js`) confere o SHA-256 antes de executar. JARs da TOTVS nunca entram aqui.
+Não editar estes arquivos à mão: o carregador (`src/flow/fluiggers.js`) confere o SHA-256 antes de executar (`conferirPonte()` faz o mesmo com a ponte). JARs da TOTVS nunca entram aqui.

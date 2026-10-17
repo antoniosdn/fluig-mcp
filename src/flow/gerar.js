@@ -112,6 +112,39 @@ function conferirCaracteres(valor, caminho, erros) {
   }
 }
 
+// Índice do bloco WorkflowProcessEvent em BLOCOS (a posição 6 guarda null: o gerador o preenche aqui).
+const BLOCO_EVENTOS = 6;
+const RE_EVENTO_ID = /^[A-Za-z_$][\w$]*$/;
+
+/** Confere `eventos` ([{id, codigo}]) e devolve a lista ordenada por id. Erros vão em `erros`. */
+function conferirEventos(eventos, erros) {
+  if (eventos === undefined || eventos === null) return [];
+  if (!Array.isArray(eventos)) {
+    erros.push({ codigo: 'E_EVENTO_ID', mensagem: 'eventos deve ser uma lista de { id, codigo }.', caminho: 'eventos' });
+    return [];
+  }
+  const vistos = new Set();
+  eventos.forEach((e, i) => {
+    const caminho = `eventos[${i}]`;
+    if (!e || typeof e.id !== 'string' || !RE_EVENTO_ID.test(e.id)) {
+      erros.push({
+        codigo: 'E_EVENTO_ID',
+        mensagem: `O id do evento em ${caminho} ("${e && e.id}") não é um identificador JavaScript válido; use letras, dígitos, _ e $, sem começar por dígito.`,
+        caminho,
+      });
+    } else if (vistos.has(e.id)) {
+      erros.push({ codigo: 'E_EVENTO_ID', mensagem: `O evento ${e.id} aparece mais de uma vez; mantenha um só script por evento.`, caminho });
+    } else vistos.add(e.id);
+    if (!e || typeof e.codigo !== 'string') {
+      erros.push({ codigo: 'E_EVENTO_ID', mensagem: `O evento em ${caminho} não tem "codigo" (texto do script).`, caminho });
+    } else conferirCaracteres(e.codigo, `${caminho}.codigo`, erros);
+  });
+  return eventos
+    .filter((e) => e && typeof e.id === 'string' && typeof e.codigo === 'string')
+    .slice()
+    .sort((a, b) => a.id.localeCompare(b.id, 'en'));
+}
+
 /** Lê categoria, volume, período e empresa do processo-modelo. Devolve null (e erro) se ilegível. */
 function lerModelo(modelo, erros) {
   const falha = (motivo) => {
@@ -462,11 +495,12 @@ function montarCaptura(a, ctx) {
 /**
  * Gera o XML ECM30 do processo.
  * @param {object} spec spec v1
- * @param {{versaoAlvo: '1.8.2'|'2.0', lookups?: object, modelo?: string, origem?: object}} opcoes
+ * @param {{versaoAlvo: '1.8.2'|'2.0', lookups?: object, modelo?: string, origem?: object, eventos?: Array<{id: string, codigo: string}>}} opcoes
+ * `eventos` preenche o bloco WorkflowProcessEvent (scripts do processo); sem ele o bloco sai vazio.
  * @returns {Promise<{ok: boolean, erros?: Array, avisos: Array, xml?: string, sequencias?: object}>}
  */
 export async function gerarXmlProcesso(spec, opcoes = {}) {
-  const { versaoAlvo, lookups, modelo, origem } = opcoes || {};
+  const { versaoAlvo, lookups, modelo, origem, eventos } = opcoes || {};
 
   // 1. validação da spec
   const v = await validarSpec(spec, { versaoAlvo, lookups });
@@ -489,6 +523,7 @@ export async function gerarXmlProcesso(spec, opcoes = {}) {
     const lido = lerModelo(modelo, erros);
     if (lido) dadosModelo = lido;
   }
+  const eventosOrdenados = conferirEventos(eventos, erros);
   const grupos = agruparLigacoes(spec, avisosG);
   const org = conferirOrigem(origem, spec, grupos, erros, avisosG);
   if (erros.length > 0) return { ok: false, erros, avisos: v.avisos };
@@ -642,6 +677,17 @@ export async function gerarXmlProcesso(spec, opcoes = {}) {
     [BLOCO.ligacoes]: ligacoes,
     [BLOCO.servicos]: servicos,
     [BLOCO.regras]: regras,
+    [BLOCO_EVENTOS]: eventosOrdenados.map((e) =>
+      grupo('WorkflowProcessEvent', [
+        pkNo('workflowProcessEventPK', ['companyId', 'eventId', 'processId', 'version'], {
+          companyId,
+          eventId: e.id,
+          processId,
+          version: 1,
+        }),
+        folha('eventDescription', e.codigo),
+      ])
+    ),
   };
   const filhosRaiz = BLOCOS.map((nome, i) => {
     if (i === BLOCO.definicao) return definicao;

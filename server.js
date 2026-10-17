@@ -1219,6 +1219,8 @@ Uso:
   fluig-mcp --list      Lista as ferramentas expostas e sai. NÃO precisa de credencial.
   fluig-mcp --version   Mostra a versão e sai.
   fluig-mcp --help      Mostra esta mensagem.
+  fluig-mcp regenerar <arquivo.process> [1.8.2|2.0]   Regenera o ECM30 e o SVG de um .process (sem credencial).
+  fluig-mcp instalar-conversor --de <pasta plugins | zip> | --baixar 1.8.2.0   Instala o conversor do Studio no cache local.
 
 Ambiente (nenhum tem default — veja .env.example):
   Homologação:  FLUIG_HOST       FLUIG_USER       FLUIG_PASS
@@ -1246,6 +1248,12 @@ if (process.argv.includes('--list')) {
   for (const t of TOOLS_ATIVAS) console.log(`  ${t.write ? '!' : ' '} ${t.name}: ${t.description}`);
   if (!READONLY) console.log('\n(! marca as ferramentas que alteram o estado do servidor.)');
   process.exit(0);
+}
+
+if (['regenerar', 'instalar-conversor'].includes(process.argv[2])) {
+  // Subcomandos locais do gerador de fluxo: não precisam de credencial nem sobem o servidor MCP.
+  const { executarCli } = await import('./src/flow/cli-fluxo.js');
+  process.exit(await executarCli(process.argv.slice(2)));
 }
 
 const configurados = ambientesConfigurados();

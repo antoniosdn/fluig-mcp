@@ -13,6 +13,10 @@ versionamento [SemVer](https://semver.org/lang/pt-BR/).
   `fluig_flow_deploy`. Geram o XML ECM30 de um processo a partir de uma spec JSON (versões alvo
   1.8.2 e 2.0), conferem papéis, campos e versão no servidor e publicam pelo SOAP oficial. O
   deploy recusa `prod`, exige `confirm` e publica sem SVG.
+- Regenerar ECM30 e SVG de um `.process` sem VS Code nem Eclipse: `fluig-mcp regenerar` (conversor
+  oficial do Studio pela ponte Java da Fluiggers, ou gerador próprio como plano B) e
+  `fluig-mcp instalar-conversor` (cache local em `~/.fluig-mcp`, conferido por SHA-256; nenhum JAR
+  no repositório).
 - `fluig_log_search`: busca resumida no log do servidor pela widget de leitura de log
   (`FLUIG_LOG_API`, padrão `/ascendra_log_viewer/api/logs`). Corta linhas longas, agrupa
   ocorrências que só mudam data, id ou número, limita o total e, com `contexto`, devolve as
