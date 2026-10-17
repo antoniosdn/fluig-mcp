@@ -258,5 +258,8 @@ Contribuições são bem-vindas: veja [CONTRIBUTING.md](CONTRIBUTING.md).
 
 [MIT](LICENSE).
 
+Código de terceiros: `vendor/fluiggers-3.0.1/` contém um recorte da extensão Fluiggers para VS Code
+3.0.1 (MIT, © 2020 Bruno Gasparetto); ver `LICENSE.txt` e `PROCEDENCIA.md` da pasta.
+
 TOTVS, Fluig e RM/Corpore são marcas da TOTVS S.A. Este projeto é independente e não é afiliado,
 patrocinado nem endossado pela TOTVS.

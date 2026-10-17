@@ -7,6 +7,8 @@ versionamento [SemVer](https://semver.org/lang/pt-BR/).
 
 ### Adicionado
 
+- Cópia fixa de parte da extensão Fluiggers 3.0.1 (MIT) em `vendor/fluiggers-3.0.1/` e carregador
+  `src/flow/fluiggers.js`, base para gerar e regenerar `.process`/SVG sem VS Code.
 - Gerador de fluxo: `fluig_flow_validate`, `fluig_flow_generate`, `fluig_flow_read` e
   `fluig_flow_deploy`. Geram o XML ECM30 de um processo a partir de uma spec JSON (versões alvo
   1.8.2 e 2.0), conferem papéis, campos e versão no servidor e publicam pelo SOAP oficial. O
