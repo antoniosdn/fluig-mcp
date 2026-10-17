@@ -107,12 +107,15 @@ errado.
 
 Este servidor pode alterar dados de produção. Ele foi construído assumindo isso.
 
-**Modo somente leitura.** `FLUIG_READONLY=1` remove as 37 ferramentas de escrita da listagem e
+**Modo somente leitura.** `FLUIG_READONLY=1` remove as 38 ferramentas de escrita da listagem e
 passa a recusá-las. Recomendado para agente rodando sem supervisão.
 
 ```bash
-FLUIG_READONLY=1 node server.js --list   # 60 ferramentas, nenhuma de escrita
+FLUIG_READONLY=1 node server.js --list   # 64 ferramentas, nenhuma de escrita
 ```
+
+**Gerador de fluxo.** `fluig_flow_deploy` recusa `env:"prod"` nesta versão, exige `confirm: true`,
+confere a versão do servidor (recusa `versaoAlvo` maior) e publica sem SVG.
 
 **Confirmação explícita.** Toda ferramenta de escrita exige `confirm: true`. As destrutivas
 (`fluig_process_convert_instances`, `fluig_rm_save_record`) devolvem um **dry-run** com o plano
@@ -186,6 +189,15 @@ Para reportar vulnerabilidade, veja [SECURITY.md](SECURITY.md).
 `fluig_log_search` lê o log do servidor pela widget de leitura de log instalada no Fluig
 (padrão `/ascendra_log_viewer/api/logs`; outra base em `FLUIG_LOG_API`) e devolve o resultado
 resumido: linhas cortadas, repetidas agrupadas e total limitado a cerca de 30 mil caracteres.
+
+**Gerador de fluxo** (4)
+`fluig_flow_validate` · `fluig_flow_generate` · `fluig_flow_read` · **!** `fluig_flow_deploy`
+
+Geram o processo a partir de uma spec JSON (v1; formato no comentário de `src/flow/spec.js`), para
+as versões alvo `1.8.2` e `2.0`. `validate` confere a spec e, no servidor (só leitura), papéis,
+campos do formulário e versão do Fluig; `generate` devolve o XML ECM30; `read` exporta um processo
+existente como spec, com `origem` para gerar de novo sem renumerar; `deploy` publica uma versão
+(sem SVG). Fora da v1: subprocesso, eventos de mensagem e sinal, timer, atribuição fora de papel e SVG.
 
 Descrição completa de cada uma: `node server.js --list`.
 

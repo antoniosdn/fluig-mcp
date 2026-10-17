@@ -7,6 +7,10 @@ versionamento [SemVer](https://semver.org/lang/pt-BR/).
 
 ### Adicionado
 
+- Gerador de fluxo: `fluig_flow_validate`, `fluig_flow_generate`, `fluig_flow_read` e
+  `fluig_flow_deploy`. Geram o XML ECM30 de um processo a partir de uma spec JSON (versões alvo
+  1.8.2 e 2.0), conferem papéis, campos e versão no servidor e publicam pelo SOAP oficial. O
+  deploy recusa `prod`, exige `confirm` e publica sem SVG.
 - `fluig_log_search`: busca resumida no log do servidor pela widget de leitura de log
   (`FLUIG_LOG_API`, padrão `/ascendra_log_viewer/api/logs`). Corta linhas longas, agrupa
   ocorrências que só mudam data, id ou número, limita o total e, com `contexto`, devolve as

@@ -16,6 +16,7 @@ import { loadConfig, ambientesConfigurados } from './src/config.js';
 import { FluigClient } from './src/client.js';
 import { LOG_API_PADRAO, normalizarParametros, caminhoApi, resumirLog } from './src/logsearch.js';
 import { readFileSync } from 'node:fs';
+import { flowValidate, flowGenerate, flowRead, flowDeploy } from './src/flow/ferramentas.js';
 
 const VERSAO = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version;
 
@@ -1123,6 +1124,49 @@ const TOOLS = [
     handler: async ({ dataServerName, xml, contexto, confirm }) =>
       client.rmSaveRecord(dataServerName, xml, contexto, { confirm: !!confirm }),
   },
+  // ===================== GERADOR DE FLUXO =====================
+  {
+    name: 'fluig_flow_validate',
+    description: 'Valida uma spec de fluxo (formato v1 do gerador) sem gerar nem gravar nada. Confere estrutura, alcance, gateways, versão alvo e, no servidor (só leitura): papéis, campos do formulário (formId) e a versão do Fluig. Devolve erros e avisos com código e caminho.',
+    inputSchema: S({
+      spec: { type: 'object', description: 'spec v1 do fluxo (ver comentário de src/flow/spec.js)' },
+      versaoAlvo: { type: 'string', enum: ['1.8.2', '2.0'], description: 'versão do Fluig para a qual o XML será gerado' },
+    }, ['spec', 'versaoAlvo']),
+    handler: async (args) => flowValidate(client, args),
+  },
+  {
+    name: 'fluig_flow_generate',
+    description: 'Gera o XML ECM30 de um processo a partir da spec v1 e devolve o XML e os avisos. Não grava nada no servidor nem em disco. Para herdar categoria, volume, período e empresa, informe modeloProcessId (processo do mesmo servidor, lido só para isso).',
+    inputSchema: S({
+      spec: { type: 'object', description: 'spec v1 do fluxo' },
+      versaoAlvo: { type: 'string', enum: ['1.8.2', '2.0'], description: 'versão do Fluig para a qual o XML será gerado' },
+      modeloProcessId: str('processo do mesmo servidor de onde herdar categoria, volume, período e empresa (opcional)'),
+      origem: { type: 'object', description: 'números originais devolvidos por fluig_flow_read, para não renumerar (opcional)' },
+    }, ['spec', 'versaoAlvo']),
+    handler: async (args) => flowGenerate(client, args),
+  },
+  {
+    name: 'fluig_flow_read',
+    description: 'Exporta o XML de um processo do servidor e devolve a spec v1 equivalente, com o que ficou fora da v1 (ignorados) e os números originais (origem) para gerar de novo sem renumerar.',
+    inputSchema: S({
+      processId: str('id do processo'),
+      version: num('versão específica (opcional; padrão = versão corrente)'),
+    }, ['processId']),
+    handler: async (args) => flowRead(client, args),
+  },
+  {
+    name: 'fluig_flow_deploy',
+    description: '⚠️ ESCRITA ESTRUTURAL. Gera o XML da spec v1 e publica uma versão do processo pelo SOAP oficial (deployProcess: createWorkFlowProcessVersion → importProcess → releaseProcess). Exige confirm=true. Recusa env="prod" nesta versão, versaoAlvo maior que a versão do servidor, spec com erro e papel/campo não conferido. Publica sem SVG: o processo roda, mas fica sem desenho. Use fluig_flow_validate antes.',
+    inputSchema: S({
+      spec: { type: 'object', description: 'spec v1 do fluxo' },
+      versaoAlvo: { type: 'string', enum: ['1.8.2', '2.0'], description: 'versão do Fluig para a qual o XML será gerado' },
+      novo: { type: 'boolean', description: 'true = processo novo; false = nova versão de processo existente' },
+      modeloProcessId: str('processo do mesmo servidor de onde herdar categoria, volume, período e empresa (opcional)'),
+      origem: { type: 'object', description: 'números originais devolvidos por fluig_flow_read (opcional)' },
+      confirm: { type: 'boolean', description: 'obrigatório true: publica versão de processo no servidor' },
+    }, ['spec', 'versaoAlvo', 'novo', 'confirm']),
+    handler: async (args) => flowDeploy(client, args),
+  },
 ];
 
 // Injeta o parâmetro `env` em TODAS as ferramentas de uma vez (em vez de editar as ~20
@@ -1158,7 +1202,7 @@ const TOOLS_ESCRITA = new Set([
   'fluig_process_version_withdraw', 'fluig_process_version_delete', 'fluig_process_create',
   'fluig_process_convert_instances', 'fluig_deploy_process', 'fluig_job_add', 'fluig_job_delete',
   'fluig_job_run', 'fluig_card_save', 'fluig_ged_upload', 'fluig_workflow_events_update',
-  'fluig_rm_db_exec', 'fluig_rm_save_record', 'fluig_rest_post',
+  'fluig_rm_db_exec', 'fluig_rm_save_record', 'fluig_rest_post', 'fluig_flow_deploy',
   // read-only na intenção, escrita na mecânica (gravam dataset para rodar SQL):
   'fluig_db_query', 'fluig_rm_db_query', 'fluig_service_list', 'fluig_process_error_log',
   'fluig_rm_dataserver_schema',
