@@ -6,8 +6,11 @@
  * - spec: spec v1 (formato de spec.js), sem campos extras.
  * - origem: o que só serve para ida e volta (fora da spec):
  *     { processId, versao, sequencias: { [idAtividade]: number }, capturas: { [idServico]: number },
- *       linkSequences: number[] }
- *   `capturas` guarda o sequence da captura de erro (sem ligação) descartada de cada serviço automatizado.
+ *       tratamentos: { [idServico]: number }, linkSequences: number[] }
+ *   `capturas` guarda o sequence da captura de erro descartada de cada serviço automatizado.
+ *   `tratamentos` guarda o linkSequence da ligação captura → tratamento, quando a captura tem uma única saída
+ *   (e nenhuma entrada) para uma atividade conhecida: o serviço ganha `tratamentoErro: "s<destino>"` e essa
+ *   ligação não entra em `ligacoes` nem em `linkSequences`.
  * - ignorados: informação do XML que a v1 não guarda (perda esperada).
  * - avisos: inconsistência no XML, ou perda que muda o comportamento do processo.
  *   Item = { codigo, mensagem, ref }.
@@ -167,6 +170,7 @@ export function lerXmlProcesso(xml) {
     versao: Number.isInteger(versaoNum) ? versaoNum : null,
     sequencias: {},
     capturas: {},
+    tratamentos: {},
     linkSequences: [],
   };
 
@@ -203,6 +207,33 @@ export function lerXmlProcesso(xml) {
     if (e.bpmn === 43 && Number.isInteger(e.pai)) capturasPorPai.add(e.pai);
   }
 
+  // Captura de erro com tratamento: uma saída, nenhuma entrada, destino é atividade conhecida (não captura).
+  const marcaPorCaptura = new Map(); // seq da captura -> marcas da ligação que impedem a absorção
+  const tratamentoPorPai = new Map(); // seq do serviço -> { capSeq, destSeq, no }
+  const ligacoesDeTratamento = new Set(); // nós ProcessLink absorvidos
+  for (const e of estadoPorSeq.values()) {
+    if (e.bpmn !== 43) continue;
+    const pai = estadoPorSeq.get(e.pai);
+    if (!ehServicoAutomatizado(pai) || tratamentoPorPai.has(pai.seq)) continue;
+    const saidas = nosLigacao.filter((l) => inteiro(textoDe(l, 'initialStateSequence')) === e.seq);
+    const entradas = nosLigacao.filter((l) => inteiro(textoDe(l, 'finalStateSequence')) === e.seq);
+    if (saidas.length !== 1 || entradas.length !== 0) continue;
+    const destSeq = inteiro(textoDe(saidas[0], 'finalStateSequence'));
+    const dest = estadoPorSeq.get(destSeq);
+    if (!dest || dest.bpmn === 43) continue;
+    const marcas = ['returnPermited', 'automaticLink', 'defaultLink'].filter(
+      (c) => aparar(textoDe(saidas[0], c)).toLowerCase() === 'true'
+    );
+    const extras = camposNaoPadrao(saidas[0], CONSUMIDOS_LIGACAO);
+    if (marcas.length > 0 || extras.length > 0) {
+      marcaPorCaptura.set(e.seq, [...marcas, ...extras].join(', '));
+      continue;
+    }
+    tratamentoPorPai.set(pai.seq, { capSeq: e.seq, destSeq, no: saidas[0] });
+    ligacoesDeTratamento.add(saidas[0]);
+  }
+  const capturasAbsorvidas = new Set([...tratamentoPorPai.values()].map((t) => t.capSeq));
+
   /* ---------------------------------------------------------------- */
   /* 3.3 / 3.4 Atividades                                              */
   /* ---------------------------------------------------------------- */
@@ -234,11 +265,27 @@ export function lerXmlProcesso(xml) {
       const pai = estadoPorSeq.get(e.pai);
       const paiOk = ehServicoAutomatizado(pai);
       const temLigacao = seqsComLigacao.has(e.seq);
-      if (!temLigacao && paiOk) {
+      if (capturasAbsorvidas.has(e.seq)) {
+        const t = tratamentoPorPai.get(pai.seq);
+        ign(
+          'I_CAPTURA_ERRO_REGERADA',
+          `Captura de erro ${id} do serviço s${pai.seq} descartada: o gerador a recria a partir de tratamentoErro (s${t.destSeq}).`,
+          id
+        );
+        descartada = true;
+        origem.capturas[`s${pai.seq}`] = e.seq;
+        const linkSeq = inteiro(textoDe(filho(t.no, 'processLinkPK'), 'linkSequence'));
+        if (Number.isInteger(linkSeq)) origem.tratamentos[`s${pai.seq}`] = linkSeq;
+      } else if (!temLigacao && paiOk) {
         ign(
           'I_CAPTURA_ERRO_REGERADA',
           `Captura de erro ${id} do serviço s${pai.seq} descartada: o gerador recria a captura de erro do serviço automatizado.`,
           id
+        );
+        avi(
+          'W_LEITOR_CAPTURA_SEM_TRATAMENTO',
+          `O serviço automatizado s${pai.seq} não tem tratamento do erro (a captura não tem saída); indique tratamentoErro antes de gerar de novo.`,
+          `s${pai.seq}`
         );
         descartada = true;
         origem.capturas[`s${pai.seq}`] = e.seq;
@@ -247,7 +294,9 @@ export function lerXmlProcesso(xml) {
         if (temLigacao) {
           avi(
             'W_LEITOR_FLUXO_ERRO',
-            `A captura de erro ${id} tem fluxo de tratamento; a v1 não modela o fluxo de erro.`,
+            `A captura de erro ${id} tem ligações fora do formato da v1 (uma única saída para a atividade de tratamento)${
+              marcaPorCaptura.has(e.seq) ? `; a ligação tem: ${marcaPorCaptura.get(e.seq)}` : ''
+            }.`,
             id
           );
         }
@@ -357,10 +406,11 @@ export function lerXmlProcesso(xml) {
       ign('I_ATIVIDADE_CAMPOS', `Campos de ${id} que a spec v1 não guarda: ${outros.join(', ')}.`, id);
     }
 
-    // ordem das chaves: id, tipo, nome, responsavel, execucao, posicao
+    // ordem das chaves: id, tipo, nome, responsavel, execucao, tratamentoErro, posicao
     const ordenada = { id: ativ.id, tipo: ativ.tipo, nome: ativ.nome };
     if (ativ.responsavel) ordenada.responsavel = ativ.responsavel;
     if (ativ.execucao) ordenada.execucao = ativ.execucao;
+    if (tipo === 'servico' && tratamentoPorPai.has(e.seq)) ordenada.tratamentoErro = `s${tratamentoPorPai.get(e.seq).destSeq}`;
     if (ativ.posicao) ordenada.posicao = ativ.posicao;
     atividades.push(ordenada);
     tipoPorSeq.set(e.seq, tipo);
@@ -442,6 +492,7 @@ export function lerXmlProcesso(xml) {
   const ligacoes = [];
   const alvosUsados = new Set(); // "de->para" de gateways já atendidos
   for (const nl of nosLigacao) {
+    if (ligacoesDeTratamento.has(nl)) continue;
     const de = inteiro(textoDe(nl, 'initialStateSequence'));
     const para = inteiro(textoDe(nl, 'finalStateSequence'));
     const rot = `s${Number.isNaN(de) ? '?' : de}→s${Number.isNaN(para) ? '?' : para}`;

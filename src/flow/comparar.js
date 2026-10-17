@@ -378,6 +378,8 @@ function calcularCobertura(idx, leitura) {
   const v1Id = (id) => Object.prototype.hasOwnProperty.call(TIPOS, tipoPorId.get(id));
   const pares = new Set();
   for (const l of spec.ligacoes) if (v1Id(l.de) && v1Id(l.para)) pares.add(`${l.de}\u0000${l.para}`);
+  // a ligação captura -> tratamento (uma por tratamentoErro lido) é ligação v1, mesmo fora de `ligacoes`
+  const ligacoesTratamento = spec.atividades.filter((x) => typeof x.tratamentoErro === 'string').length;
   let automaticas = 0;
   let padrao = 0;
   for (const no of idx.ligacoes.values()) {
@@ -414,7 +416,7 @@ function calcularCobertura(idx, leitura) {
 
   return {
     atividades: { total: totalAtiv, v1: totalAtiv - nForaV1, capturasRegeradas: regeradas, foraV1 },
-    ligacoes: { total: idx.ligacoes.size, v1: pares.size, automaticas, padrao },
+    ligacoes: { total: idx.ligacoes.size, v1: pares.size + ligacoesTratamento, automaticas, padrao },
     condicoes: { total: idx.condicoes.size, js, regras: porRegras, v1: condV1 },
     regras: { total: idx.regras.size, v1: regrasV1 },
     atribuicoes: { total: atribTotal, v1: atribV1, foraV1: atribFora },

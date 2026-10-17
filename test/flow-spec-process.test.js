@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { NO_VENDOR, specParaProcess, compararSpecProcess } from '../src/flow/spec-process.js';
+import { NO_VENDOR, specParaProcess, compararSpecProcess, conferirConfiguracao } from '../src/flow/spec-process.js';
+import { montarProcessoSintetico } from './_process-sintetico.js';
 import { TIPOS } from '../src/flow/spec.js';
 import { carregarFluiggers } from '../src/flow/fluiggers.js';
 import { lerProcess } from '../src/flow/process.js';
@@ -55,6 +56,46 @@ for (const [nome, obter] of CASOS) {
     assert.equal(r.fluxos.length, spec.ligacoes.length);
   });
 }
+
+for (const [nome, obter] of CASOS) {
+  test(`${nome}: a captura de erro sai ligada ao tratamento e o editor não acusa pendência`, () => {
+    const spec = obter();
+    const r = specParaProcess(spec, { versaoAlvo: '2.0' });
+    const captura = `intermediateerror${r.origem.capturas.erp}`;
+    const f = carregarFluiggers().parseProcess(r.texto);
+    const fluxo = f.flows.filter((x) => x.attributes.sourceRef === captura);
+    assert.equal(fluxo.length, 1);
+    assert.equal(fluxo[0].attributes.targetRef, r.ids.trata);
+    assert.equal(fluxo[0].id, r.fluxosTratamento.erp);
+    assert.deepEqual(r.origem.tratamentos, { erp: Number(/\d+$/.exec(r.fluxosTratamento.erp)[0]) });
+    // a ligação da captura não é uma ligação da spec
+    assert.equal(r.fluxos.length, spec.ligacoes.length);
+    assert.ok(!r.fluxos.includes(r.fluxosTratamento.erp));
+    assert.deepEqual(conferirConfiguracao(r.texto), []);
+  });
+}
+
+test('regressão: captura de erro sem saída → o editor acusa "Elemento sem fluxo de saída."', () => {
+  const { texto, ids } = montarProcessoSintetico({ gateway: false, servico: 'sem_saida' });
+  const pend = conferirConfiguracao(texto);
+  assert.deepEqual(pend.filter((x) => x.id === ids.captura), [{ id: ids.captura, mensagem: 'Elemento sem fluxo de saída.' }]);
+  // a atividade de tratamento do sintético fica sem entrada quando a captura não tem saída
+  assert.deepEqual(pend.filter((x) => x.id !== ids.captura).map((x) => x.id), [ids.tratamento]);
+  assert.match(ids.captura, /^intermediateerror\d+$/);
+  // com o fluxo para o tratamento a pendência some
+  const ok = montarProcessoSintetico({ gateway: false, servico: 'tratado' });
+  assert.deepEqual(conferirConfiguracao(ok.texto), []);
+});
+
+test('P2: compararSpecProcess detecta divergência em tratamentoErro', () => {
+  const spec = fixture('spec-completa');
+  const r = specParaProcess(spec);
+  const lida = lerProcess(r.texto).spec;
+  const alterada = fixture('spec-completa');
+  alterada.atividades.find((a) => a.id === 'erp').tratamentoErro = 'ges';
+  const campos = compararSpecProcess(alterada, lida, { ids: r.ids, posicoes: r.posicoes }).map((d) => d.campo);
+  assert.deepEqual(campos, ['atividades.erp.tratamentoErro']);
+});
 
 test('acentos da descrição saem como referência numérica', () => {
   const spec = fixture('spec-completa');

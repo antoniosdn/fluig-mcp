@@ -30,9 +30,23 @@
       "tipo": "servico",
       "nome": "Integrar ERP",
       "execucao": "automatizada",
+      "tratamentoErro": "trata",
       "posicao": {
         "x": 330,
         "y": 85
+      }
+    },
+    {
+      "id": "trata",
+      "tipo": "humana",
+      "nome": "Tratar erro da integração",
+      "responsavel": {
+        "tipo": "pool_papel",
+        "valor": "admin"
+      },
+      "posicao": {
+        "x": 330,
+        "y": 220
       }
     },
     {
@@ -129,6 +143,10 @@
     {
       "de": "erp",
       "para": "gw"
+    },
+    {
+      "de": "trata",
+      "para": "erp"
     },
     {
       "de": "gw",

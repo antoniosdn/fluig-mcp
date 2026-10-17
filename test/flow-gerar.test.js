@@ -83,14 +83,16 @@ const S3 = () => ({
   formId: 30,
   atividades: [
     ini,
-    { id: 'auto', tipo: 'servico', nome: 'Integrar', execucao: 'automatizada' },
+    { id: 'auto', tipo: 'servico', nome: 'Integrar', execucao: 'automatizada', tratamentoErro: 'trata' },
     { id: 'imed', tipo: 'servico', nome: 'Registrar', execucao: 'imediata' },
     fimOk,
+    { id: 'trata', tipo: 'humana', nome: 'Tratar erro', responsavel: { tipo: 'papel', valor: 'ti' } },
   ],
   ligacoes: [
     { de: 'ini', para: 'auto' },
     { de: 'auto', para: 'imed' },
     { de: 'imed', para: 'fim' },
+    { de: 'trata', para: 'auto' },
   ],
 });
 
@@ -359,11 +361,12 @@ const SG = () => ({
   atividades: [
     ini,
     { id: 'hum', tipo: 'humana', nome: 'Humana', responsavel: { tipo: 'papel', valor: 'gestor' } },
-    { id: 'auto', tipo: 'servico', nome: 'Auto', execucao: 'automatizada' },
+    { id: 'auto', tipo: 'servico', nome: 'Auto', execucao: 'automatizada', tratamentoErro: 'trata' },
     { id: 'imed', tipo: 'servico', nome: 'Imediata', execucao: 'imediata' },
     { id: 'gw', tipo: 'gateway_exclusivo', nome: 'Decisão' },
     fimOk,
     { id: 'canc', tipo: 'cancelamento', nome: 'Cancelado' },
+    { id: 'trata', tipo: 'humana', nome: 'Trata', responsavel: { tipo: 'papel', valor: 'gestor' } },
   ],
   ligacoes: [
     { de: 'ini', para: 'hum' },
@@ -372,6 +375,7 @@ const SG = () => ({
     { de: 'imed', para: 'gw' },
     { de: 'gw', para: 'fim', ordem: 1, condicao: { regras: [{ campo: 'a', op: 'igual', valor: 'x' }] } },
     { de: 'gw', para: 'canc', ordem: 2, condicao: { js: 'true' } },
+    { de: 'trata', para: 'auto' },
   ],
 });
 
@@ -548,18 +552,24 @@ test('versões: nome de condição em 1.8.2 é recusado pelo validador', async (
 
 test('numeração: atividades a partir de 2, captura logo depois do serviço, ligações acima', async () => {
   const r = await gerar(S3());
-  assert.deepEqual(r.sequencias, { ini: 2, auto: 3, imed: 5, fim: 6 });
+  assert.deepEqual(r.sequencias, { ini: 2, auto: 3, imed: 5, fim: 6, trata: 7 });
   const raiz = parseXml(r.xml);
-  assert.deepEqual(estadosDe(raiz).map(seqDe), [2, 3, 4, 5, 6]);
+  assert.deepEqual(estadosDe(raiz).map(seqDe), [2, 3, 4, 5, 6, 7]);
   assert.equal(textoDe(porBpmn(raiz, 43)[0], 'parentSequence'), '3');
   const links = bloco(raiz, 'ProcessLink').filhos;
+  // as 4 ligações normais primeiro; o número da ligação captura -> tratamento vem logo acima da última
   assert.deepEqual(
     links.map((l) => Number(textoDe(filho(l, 'processLinkPK'), 'linkSequence'))),
-    [7, 8, 9]
+    [8, 9, 10, 11, 12]
   );
   assert.deepEqual(
     links.map((l) => [textoDe(l, 'initialStateSequence'), textoDe(l, 'finalStateSequence')]),
-    [['2', '3'], ['3', '5'], ['5', '6']]
+    [['2', '3'], ['3', '5'], ['5', '6'], ['7', '3'], ['4', '7']]
+  );
+  const trat = links[4];
+  assert.deepEqual(
+    [textoDe(trat, 'returnPermited'), textoDe(trat, 'defaultLink')],
+    ['false', 'false']
   );
 });
 
@@ -592,7 +602,7 @@ test('numeração: com origem usa os números informados e o resto vem acima do 
 test('numeração: com origem a captura de erro pega número livre acima do maior', async () => {
   const r = await gerar(S3(), '1.8.2', { origem: { sequencias: { auto: 30 } } });
   // ini ganha o próximo livre acima do maior informado (31); a captura vem depois do serviço
-  assert.deepEqual(r.sequencias, { ini: 31, auto: 30, imed: 33, fim: 34 });
+  assert.deepEqual(r.sequencias, { ini: 31, auto: 30, imed: 33, fim: 34, trata: 35 });
   const raiz = parseXml(r.xml);
   const captura = porBpmn(raiz, 43)[0];
   assert.equal(textoDe(captura, 'parentSequence'), '30');
@@ -920,13 +930,14 @@ test('origem (c): contador único soma sequencias e linkSequences', async () => 
   const spec = S3();
   const origem = { sequencias: { ini: 2, auto: 3, imed: 5 }, linkSequences: [6, 7] };
   const r = await gerar(spec, '1.8.2', { origem });
-  // fim e a captura saem a partir de 8: captura (logo depois do serviço) 8, fim 9, terceiro link 10
-  assert.deepEqual(r.sequencias, { ini: 2, auto: 3, imed: 5, fim: 9 });
+  // o resto sai a partir de 8: captura (logo depois do serviço) 8, fim 9, tratamento 10, ligações 11 e 12,
+  // ligação captura -> tratamento 13
+  assert.deepEqual(r.sequencias, { ini: 2, auto: 3, imed: 5, fim: 9, trata: 10 });
   const raiz = parseXml(r.xml);
   assert.equal(seqDe(porBpmn(raiz, 43)[0]), 8);
   assert.deepEqual(
     bloco(raiz, 'ProcessLink').filhos.map((l) => Number(textoDe(filho(l, 'processLinkPK'), 'linkSequence'))),
-    [6, 7, 10]
+    [6, 7, 11, 12, 13]
   );
 });
 
@@ -948,8 +959,8 @@ test('origem.capturas: a captura de erro mantém o sequence informado e entra no
   const captura = porBpmn(raiz, 43)[0];
   assert.equal(seqDe(captura), 40);
   assert.equal(textoDe(captura, 'parentSequence'), '3');
-  // fim e o terceiro link vêm acima de 40
-  assert.deepEqual(r.sequencias, { ini: 2, auto: 3, imed: 5, fim: 41 });
+  // fim e o tratamento vêm acima de 40
+  assert.deepEqual(r.sequencias, { ini: 2, auto: 3, imed: 5, fim: 41, trata: 42 });
 });
 
 test('origem.capturas: repetido, inválido ou fora do formato -> E_GERADOR_ORIGEM', async () => {
@@ -972,6 +983,97 @@ test('origem.capturas: id inexistente ou serviço não automatizado é ignorado 
   const av = r.avisos.filter((a) => a.codigo === 'W_GERADOR_ORIGEM_ID');
   assert.deepEqual(av.map((a) => a.caminho), ['origem.capturas.fantasma', 'origem.capturas.imed']);
   assert.equal(porBpmn(parseXml(r.xml), 43).length, 1);
+});
+
+/* ------------------------------------------------------------------ */
+/* Passo 5.4: ligação captura de erro -> tratamento                    */
+/* ------------------------------------------------------------------ */
+
+const linksDe = (raiz) =>
+  bloco(raiz, 'ProcessLink').filhos.map((l) => ({
+    n: Number(textoDe(filho(l, 'processLinkPK'), 'linkSequence')),
+    de: Number(textoDe(l, 'initialStateSequence')),
+    para: Number(textoDe(l, 'finalStateSequence')),
+  }));
+
+test('tratamento: ProcessLink captura -> tratamento com as sequences certas, sem condição', async () => {
+  for (const versao of VERSOES) {
+    const r = await gerar(S3(), versao);
+    const raiz = parseXml(r.xml);
+    const captura = seqDe(porBpmn(raiz, 43)[0]);
+    const lig = linksDe(raiz).filter((l) => l.de === captura);
+    assert.equal(lig.length, 1);
+    assert.equal(lig[0].para, r.sequencias.trata);
+    assert.equal(bloco(raiz, 'ConditionProcessState'), undefined);
+  }
+});
+
+test('origem.tratamentos: o linkSequence informado é mantido e entra no contador', async () => {
+  const r = await gerar(S3(), '1.8.2', { origem: { sequencias: { ini: 2, auto: 3, imed: 5 }, capturas: { auto: 4 }, tratamentos: { auto: 50 } } });
+  const raiz = parseXml(r.xml);
+  const captura = seqDe(porBpmn(raiz, 43)[0]);
+  assert.equal(linksDe(raiz).find((l) => l.de === captura).n, 50);
+  // o resto vem acima de 50
+  assert.equal(r.sequencias.fim, 51);
+  assert.equal(r.sequencias.trata, 52);
+});
+
+test('origem.tratamentos: repetido, inválido ou fora do formato -> E_GERADOR_ORIGEM', async () => {
+  const casos = [
+    { tratamentos: { auto: 0 } },
+    { tratamentos: { auto: 1.5 } },
+    { tratamentos: [] },
+    { sequencias: { auto: 3 }, tratamentos: { auto: 3 } },
+    { sequencias: { auto: 3 }, capturas: { auto: 4 }, tratamentos: { auto: 4 } },
+    { sequencias: { auto: 3 }, linkSequences: [9, null, null, null], tratamentos: { auto: 9 } },
+  ];
+  for (const origem of casos) {
+    const r = await gerarXmlProcesso(S3(), { versaoAlvo: '1.8.2', origem });
+    assert.equal(r.ok, false, JSON.stringify(origem));
+    assert.ok(codigos(r.erros).includes('E_GERADOR_ORIGEM'), JSON.stringify(origem));
+  }
+});
+
+test('origem.tratamentos: id inexistente ou serviço não automatizado é ignorado com aviso', async () => {
+  const r = await gerar(S3(), '1.8.2', { origem: { tratamentos: { fantasma: 7, imed: 8 } } });
+  const av = r.avisos.filter((a) => a.codigo === 'W_GERADOR_ORIGEM_ID');
+  assert.deepEqual(av.map((a) => a.caminho), ['origem.tratamentos.fantasma', 'origem.tratamentos.imed']);
+});
+
+test('tratamento: um ProcessLink por serviço automatizado, na ordem das atividades', async () => {
+  const spec = S3();
+  spec.atividades.splice(3, 0, { id: 'auto2', tipo: 'servico', nome: 'Integrar 2', execucao: 'automatizada', tratamentoErro: 'trata' });
+  spec.ligacoes = [
+    { de: 'ini', para: 'auto' },
+    { de: 'auto', para: 'auto2' },
+    { de: 'auto2', para: 'imed' },
+    { de: 'imed', para: 'fim' },
+    { de: 'trata', para: 'auto' },
+  ];
+  const r = await gerar(spec);
+  const raiz = parseXml(r.xml);
+  const capturas = porBpmn(raiz, 43).map(seqDe);
+  assert.equal(capturas.length, 2);
+  const links = linksDe(raiz);
+  const dasCapturas = links.filter((l) => capturas.includes(l.de));
+  assert.deepEqual(dasCapturas.map((l) => l.para), [r.sequencias.trata, r.sequencias.trata]);
+  assert.ok(dasCapturas[0].n < dasCapturas[1].n);
+  assert.ok(dasCapturas[0].n > Math.max(...links.filter((l) => !capturas.includes(l.de)).map((l) => l.n)));
+});
+
+test('layout: sem posições o tratamento ganha coluna depois do serviço; spec sem tratamento sai igual', async () => {
+  const { colunasLayout } = await import('../src/flow/gerar.js');
+  const spec = S3();
+  spec.atividades.forEach((a) => delete a.posicao);
+  const g = colunasLayout(spec);
+  assert.equal(g.get('auto').coluna, 1);
+  assert.equal(g.get('trata').coluna, 2);
+  // a ligação normal vem antes: imed (coluna 2) entra antes do tratamento, na mesma coluna
+  assert.equal(g.get('imed').linha, 0);
+  assert.equal(g.get('trata').linha, 1);
+  const sem = S1();
+  const gs = colunasLayout(sem);
+  assert.deepEqual([...gs.values()].map((x) => x.coluna), [0, 1, 2]);
 });
 
 /** Gateway com saída padrão sem condição. */

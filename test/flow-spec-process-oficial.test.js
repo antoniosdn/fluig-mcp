@@ -54,6 +54,15 @@ for (const versaoAlvo of ['1.8.2', '2.0']) {
         const v = await validarSpec(lido.spec, { versaoAlvo });
         assert.deepEqual(v.erros, []);
 
+        // o ECM30 oficial tem o ProcessLink captura de erro -> tratamento (initialStateSequence = captura)
+        const capturaSeq = String(sp.origem.capturas.erp);
+        const tratamentoSeq = String(lido.origem.sequencias[`s${/(\d+)$/.exec(sp.ids.trata)[1]}`]);
+        const ligacaoCaptura = new RegExp(
+          `<initialStateSequence>${capturaSeq}</initialStateSequence>\\s*<finalStateSequence>${tratamentoSeq}</finalStateSequence>`
+        );
+        assert.match(r.ecm30.conteudo, ligacaoCaptura);
+        assert.deepEqual(lido.origem.tratamentos, { [`s${/(\d+)$/.exec(sp.ids.erp)[1]}`]: sp.origem.tratamentos.erp });
+
         // cruzamento com o gerador próprio (mesma origem; posições efetivamente gravadas no .process)
         const comPosicoes = JSON.parse(JSON.stringify(spec));
         for (const a of comPosicoes.atividades) a.posicao = sp.posicoes[a.id];

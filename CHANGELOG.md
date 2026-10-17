@@ -7,6 +7,7 @@ versionamento [SemVer](https://semver.org/lang/pt-BR/).
 
 ### Adicionado
 
+- Gerador de fluxo: serviço automatizado exige `tratamentoErro` (id da atividade humana que trata o erro); a captura de erro sai ligada à atividade de tratamento no ECM30 e no `.process`, e os leitores reconhecem essa ligação em vez de tratá-la como fora da v1.
 - Cópia fixa de parte da extensão Fluiggers 3.0.1 (MIT) em `vendor/fluiggers-3.0.1/` e carregador
   `src/flow/fluiggers.js`, base para gerar e regenerar `.process`/SVG sem VS Code.
 - Gerador de fluxo: `fluig_flow_validate`, `fluig_flow_generate`, `fluig_flow_read` e

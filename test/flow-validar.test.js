@@ -134,7 +134,7 @@ const casosErro = [
   ['E_CONDICAO_FORA_GATEWAY', (s) => { s.ligacoes[0].condicao = { js: 'true' }; }, 'ligacoes[0]'],
   ['E_CONDICAO_FORA_GATEWAY', (s) => { s.ligacoes[4].ordem = 1; }, 'ligacoes[4]'],
   ['E_SERVICO_AUTO_SAIDAS', (s) => {
-    Object.assign(ativ(s, 'ped'), { tipo: 'servico', execucao: 'automatizada' }); delete ativ(s, 'ped').responsavel;
+    Object.assign(ativ(s, 'ped'), { tipo: 'servico', execucao: 'automatizada', tratamentoErro: 'apr' }); delete ativ(s, 'ped').responsavel;
     s.ligacoes.push({ de: 'ped', para: 'apr' });
   }, 'atividades[1]'],
   ['E_VERSAO_RECURSO', (s) => { s.ligacoes[2].condicao.nome = 'Aprovado'; }, 'ligacoes[2].condicao.nome', '1.8.2'],
@@ -219,12 +219,96 @@ test('W_HUMANA_SEM_RESPONSAVEL', async () => {
 test('W_SERVICO_AUTOMATIZADO só em automatizada', async () => {
   const mk = (execucao) => com((s) => {
     Object.assign(ativ(s, 'ped'), { tipo: 'servico', execucao });
+    if (execucao === 'automatizada') ativ(s, 'ped').tratamentoErro = 'apr';
     delete ativ(s, 'ped').responsavel;
   });
   assert.equal(temProblema(await v(mk('imediata')), 'W_SERVICO_AUTOMATIZADO'), false);
   const r = await v(mk('automatizada'));
   assert.equal(temProblema(r, 'W_SERVICO_AUTOMATIZADO', 'atividades[1]'), true);
+  assert.match(r.avisos.find((a) => a.codigo === 'W_SERVICO_AUTOMATIZADO').mensagem, /ligada a apr; o script do serviço é feito depois no editor/);
   assert.equal(r.ok, true);
+});
+
+// tratamentoErro (passo 5.4)
+// base: ini -> ped(serviço automatizado, trata erro em "tr") -> gv -> apr/can; tr (humana) volta para ped
+const comTratamento = (mut) => com((s) => {
+  Object.assign(ativ(s, 'ped'), { tipo: 'servico', execucao: 'automatizada', tratamentoErro: 'tr' });
+  delete ativ(s, 'ped').responsavel;
+  s.atividades.push({ id: 'tr', tipo: 'humana', nome: 'Tratar erro', responsavel: { tipo: 'papel', valor: 'diretoria' } });
+  s.ligacoes.push({ de: 'tr', para: 'ped' });
+  if (mut) mut(s);
+});
+
+test('tratamentoErro: spec válida, sem E_INALCANCAVEL (tratamento só alcançado pela captura) nem E_SEM_SAIDA', async () => {
+  const r = await v(comTratamento());
+  assert.deepEqual(r.erros, [], JSON.stringify(r.erros));
+  // tratamento sem ligação de entrada: só a captura chega nele
+  const so = await v(comTratamento((s) => {
+    s.ligacoes = s.ligacoes.filter((l) => !(l.de === 'tr'));
+    s.ligacoes.push({ de: 'tr', para: 'fim' });
+  }));
+  assert.deepEqual(so.erros, [], JSON.stringify(so.erros));
+});
+
+test('E_TRATAMENTO_AUSENTE: serviço automatizado sem tratamentoErro', async () => {
+  const r = await v(comTratamento((s) => { delete ativ(s, 'ped').tratamentoErro; }));
+  assert.equal(temProblema(r, 'E_TRATAMENTO_AUSENTE', 'atividades[1]'), true);
+  assert.equal(r.ok, false);
+});
+
+test('E_TRATAMENTO_FORA_AUTOMATIZADO: em serviço imediato e em atividade que não é serviço', async () => {
+  const imediato = await v(comTratamento((s) => { ativ(s, 'ped').execucao = 'imediata'; }));
+  assert.equal(temProblema(imediato, 'E_TRATAMENTO_FORA_AUTOMATIZADO', 'atividades[1].tratamentoErro'), true);
+  const humana = await v(comTratamento((s) => { ativ(s, 'apr').tratamentoErro = 'tr'; }));
+  assert.equal(temProblema(humana, 'E_TRATAMENTO_FORA_AUTOMATIZADO', 'atividades[3].tratamentoErro'), true);
+});
+
+test('E_TRATAMENTO_ID e E_TRATAMENTO_TIPO', async () => {
+  const id = await v(comTratamento((s) => { ativ(s, 'ped').tratamentoErro = 'naoexiste'; }));
+  assert.equal(temProblema(id, 'E_TRATAMENTO_ID', 'atividades[1].tratamentoErro'), true);
+  for (const alvo of ['gv', 'fim', 'ini', 'ped']) {
+    const t = await v(comTratamento((s) => { ativ(s, 'ped').tratamentoErro = alvo; }));
+    assert.equal(temProblema(t, 'E_TRATAMENTO_TIPO', 'atividades[1].tratamentoErro'), true, alvo);
+  }
+});
+
+test('tratamentoErro que não é texto -> E_TIPO_CAMPO', async () => {
+  for (const ruim of [5, '', '  ', {}, null]) {
+    const r = await v(comTratamento((s) => { ativ(s, 'ped').tratamentoErro = ruim; }));
+    assert.equal(temProblema(r, 'E_TIPO_CAMPO', 'atividades[1].tratamentoErro'), true, JSON.stringify(ruim));
+  }
+});
+
+test('tratamento sem caminho até um fim -> E_SEM_CAMINHO_FIM com o complemento; sem saída -> E_SEM_SAIDA', async () => {
+  const laco = await v(comTratamento((s) => {
+    s.ligacoes = s.ligacoes.filter((l) => l.de !== 'tr');
+    s.atividades.push({ id: 'tr2', tipo: 'humana', nome: 'Tratar 2', responsavel: { tipo: 'papel', valor: 'diretoria' } });
+    s.ligacoes.push({ de: 'tr', para: 'tr2' }, { de: 'tr2', para: 'tr' });
+  }));
+  const e = laco.erros.find((x) => x.codigo === 'E_SEM_CAMINHO_FIM' && x.caminho === 'atividades[6]');
+  assert.ok(e, JSON.stringify(laco.erros));
+  assert.match(e.mensagem, /\(é o tratamento do erro de ped\)/);
+  const sem = await v(comTratamento((s) => { s.ligacoes = s.ligacoes.filter((l) => l.de !== 'tr'); }));
+  const e2 = sem.erros.find((x) => x.codigo === 'E_SEM_SAIDA' && x.caminho === 'atividades[6]');
+  assert.ok(e2, JSON.stringify(sem.erros));
+  assert.match(e2.mensagem, /\(é o tratamento do erro de ped\)/);
+});
+
+test('E_SERVICO_AUTO_SAIDAS não conta o tratamento; ligação repetida do tratamento não vira E_LIGACAO_DUPLICADA', async () => {
+  const r = await v(comTratamento());
+  assert.equal(temProblema(r, 'E_SERVICO_AUTO_SAIDAS'), false);
+  // o tratamento também pode ser alvo de uma ligação normal do serviço (mesmo par): não é duplicata
+  const dup = await v(comTratamento((s) => { s.ligacoes.push({ de: 'ped', para: 'tr' }); }));
+  assert.equal(temProblema(dup, 'E_LIGACAO_DUPLICADA'), false);
+});
+
+test('tratamento compartilhado por dois serviços', async () => {
+  const r = await v(comTratamento((s) => {
+    s.atividades.push({ id: 'srv2', tipo: 'servico', nome: 'Outro', execucao: 'automatizada', tratamentoErro: 'tr' });
+    s.ligacoes = s.ligacoes.map((l) => (l.de === 'apr' && l.para === 'fim' ? { de: 'apr', para: 'srv2' } : l));
+    s.ligacoes.push({ de: 'srv2', para: 'fim' });
+  }));
+  assert.deepEqual(r.erros, [], JSON.stringify(r.erros));
 });
 
 test('E_SERVICO_AUTO_SAIDAS: imediata com 2 saídas não dá erro', async () => {

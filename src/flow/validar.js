@@ -9,6 +9,7 @@ import {
   TIPOS,
   TIPOS_FORA_V1,
   TIPOS_FIM,
+  TIPOS_TRATAMENTO,
   OPERADORES,
   OPS_SEM_VALOR,
   OPS_COMPARACAO,
@@ -122,6 +123,9 @@ function fase1(spec, versao, ctx) {
       }
       fase1Atividade(a, i, cam, primeiroId, tipoPorId, ctx);
     });
+    atividades.forEach((a, i) => {
+      if (ehObjeto(a)) fase1Tratamento(a, `atividades[${i}]`, tipoPorId, ctx);
+    });
   }
 
   if (ligacoes) {
@@ -137,7 +141,7 @@ function fase1(spec, versao, ctx) {
 }
 
 function fase1Atividade(a, i, cam, primeiroId, tipoPorId, ctx) {
-  chavesDesconhecidas(a, ['id', 'tipo', 'nome', 'responsavel', 'execucao', 'posicao'], cam, ctx);
+  chavesDesconhecidas(a, ['id', 'tipo', 'nome', 'responsavel', 'execucao', 'tratamentoErro', 'posicao'], cam, ctx);
 
   const id = exigirTexto(a, 'id', cam, ctx);
   if (id !== undefined) {
@@ -224,6 +228,49 @@ function fase1Atividade(a, i, cam, primeiroId, tipoPorId, ctx) {
         }
       }
     }
+  }
+}
+
+/** tratamentoErro: obrigatório em serviço automatizado, proibido fora dele; aponta para atividade humana. */
+function fase1Tratamento(a, cam, tipoPorId, ctx) {
+  const rotulo = ehTexto(a.id) ? a.id : cam;
+  const automatizado = a.tipo === 'servico' && a.execucao === 'automatizada';
+  const ct = `${cam}.tratamentoErro`;
+  const tem = a.tratamentoErro !== undefined;
+
+  if (tem && !ehTexto(a.tratamentoErro)) {
+    ctx.erro('E_TIPO_CAMPO', `${ct} deve ser texto (string) com o id da atividade de tratamento.`, ct);
+    return;
+  }
+  if (automatizado && !tem) {
+    ctx.erro(
+      'E_TRATAMENTO_AUSENTE',
+      `Serviço automatizado ${rotulo} precisa de tratamentoErro: o id da atividade humana que trata o erro (o Studio exige a captura de erro, e o editor exige saída nela).`,
+      cam
+    );
+    return;
+  }
+  if (!tem) return;
+  if (!automatizado) {
+    const o = a.tipo === 'servico' ? `serviço ${a.execucao}` : String(a.tipo);
+    ctx.erro(
+      'E_TRATAMENTO_FORA_AUTOMATIZADO',
+      `tratamentoErro só vale para serviço automatizado (${rotulo} é ${o}); serviço imediato não tem captura de erro.`,
+      ct
+    );
+    return;
+  }
+  if (!tipoPorId.has(a.tratamentoErro)) {
+    ctx.erro('E_TRATAMENTO_ID', `tratamentoErro de ${rotulo} aponta para atividade inexistente: "${a.tratamentoErro}".`, ct);
+    return;
+  }
+  const t = tipoPorId.get(a.tratamentoErro);
+  if (!TIPOS_TRATAMENTO.includes(t) || a.tratamentoErro === a.id) {
+    ctx.erro(
+      'E_TRATAMENTO_TIPO',
+      `A atividade de tratamento do erro de ${rotulo} deve ser humana (${a.tratamentoErro} é ${t === undefined ? 'sem tipo' : t}).`,
+      ct
+    );
   }
 }
 
@@ -383,6 +430,16 @@ function fase2(spec, ctx) {
     entradas.get(l.para).push(i);
   });
 
+  // aresta de erro: serviço automatizado -> tratamento (conta só em alcançabilidade e caminho até um fim)
+  const arestasErro = ativs.filter((a) => a.tipo === 'servico' && a.tratamentoErro !== undefined);
+  const tratamentoDe = new Map(); // id do tratamento -> ids dos serviços que o usam
+  arestasErro.forEach((a) => {
+    if (!tratamentoDe.has(a.tratamentoErro)) tratamentoDe.set(a.tratamentoErro, []);
+    tratamentoDe.get(a.tratamentoErro).push(a.id);
+  });
+  const complemento = (id) =>
+    tratamentoDe.has(id) ? ` (é o tratamento do erro de ${tratamentoDe.get(id).join(', ')})` : '';
+
   const inicios = ativs.filter((a) => a.tipo === 'inicio');
   const fins = ativs.filter((a) => TIPOS_FIM.includes(a.tipo));
   if (inicios.length !== 1) {
@@ -405,7 +462,7 @@ function fase2(spec, ctx) {
   ativs.forEach((a, i) => {
     if (!TIPOS_FIM.includes(a.tipo) && saidas.get(a.id).length === 0) {
       semSaida.add(a.id);
-      ctx.erro('E_SEM_SAIDA', `${a.id} não tem ligação de saída.`, `atividades[${i}]`);
+      ctx.erro('E_SEM_SAIDA', `${a.id} não tem ligação de saída${complemento(a.id)}.`, `atividades[${i}]`);
     }
   });
 
@@ -420,6 +477,11 @@ function fase2(spec, ctx) {
         alcancados.add(p);
         fila.push(p);
       }
+    }
+    const a = ativs[idx.get(n)];
+    if (a.tipo === 'servico' && a.tratamentoErro !== undefined && idx.has(a.tratamentoErro) && !alcancados.has(a.tratamentoErro)) {
+      alcancados.add(a.tratamentoErro);
+      fila.push(a.tratamentoErro);
     }
   }
   if (inicios.length > 0) {
@@ -443,10 +505,16 @@ function fase2(spec, ctx) {
           fila.push(d);
         }
       }
+      for (const sv of tratamentoDe.get(n) || []) {
+        if (!chegam.has(sv)) {
+          chegam.add(sv);
+          fila.push(sv);
+        }
+      }
     }
     ativs.forEach((a, i) => {
       if (!chegam.has(a.id) && !semSaida.has(a.id)) {
-        ctx.erro('E_SEM_CAMINHO_FIM', `De ${a.id} não há caminho até um fim (laço sem saída?).`, `atividades[${i}]`);
+        ctx.erro('E_SEM_CAMINHO_FIM', `De ${a.id} não há caminho até um fim (laço sem saída?)${complemento(a.id)}.`, `atividades[${i}]`);
       }
     });
   }
@@ -516,7 +584,7 @@ function fase2(spec, ctx) {
       }
       ctx.aviso(
         'W_SERVICO_AUTOMATIZADO',
-        `Serviço automatizado ${a.id}: o gerador cria a captura de erro sem ligação; o tratamento do erro e o script do serviço são feitos depois no editor.`,
+        `Serviço automatizado ${a.id}: o gerador cria a captura de erro ligada a ${a.tratamentoErro}; o script do serviço é feito depois no editor.`,
         cam
       );
     }

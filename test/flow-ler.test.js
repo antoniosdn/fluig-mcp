@@ -138,34 +138,32 @@ test('fixture medicao_contrato (demo, saneada)', async () => {
   assert.ok(temItem(avisos, 'W_LEITOR_FLUXO_AUTOMATICO', 'ligacao s5→s11'));
 });
 
-test('fixture rpa (demo, saneada): captura de erro ligada fica como captura_erro', async () => {
-  const { spec, avisos } = lerXmlProcesso(fixture('rpa'));
+test('fixture rpa (demo, saneada): captura de erro com tratamento vira tratamentoErro', async () => {
+  const { spec, avisos, origem, ignorados } = lerXmlProcesso(fixture('rpa'));
 
   const servicos = spec.atividades.filter((a) => a.tipo === 'servico');
   assert.deepStrictEqual(servicos.map((a) => [a.id, a.execucao]), [['s32', 'automatizada'], ['s38', 'automatizada']]);
-  assert.deepStrictEqual(
-    spec.atividades.filter((a) => a.tipo === 'captura_erro').map((a) => a.id),
-    ['s40', 's42']
-  );
-  assert.ok(spec.ligacoes.some((l) => l.de === 's40' && l.para === 's41'));
-  assert.ok(spec.ligacoes.some((l) => l.de === 's42' && l.para === 's43'));
+  // nenhuma captura_erro: as duas viram tratamentoErro do serviço pai
+  assert.deepStrictEqual(spec.atividades.filter((a) => a.tipo === 'captura_erro'), []);
+  assert.equal(spec.atividades.find((a) => a.id === 's38').tratamentoErro, 's41');
+  assert.equal(spec.atividades.find((a) => a.id === 's32').tratamentoErro, 's43');
+  assert.deepStrictEqual(origem.tratamentos, { s38: 44, s32: 46 });
+  assert.deepStrictEqual(origem.capturas, { s38: 40, s32: 42 });
+  // a ligação captura -> tratamento fica fora de ligacoes e de origem.linkSequences
+  assert.ok(!spec.ligacoes.some((l) => ['s40', 's42'].includes(l.de) || ['s40', 's42'].includes(l.para)));
+  assert.ok(!origem.linkSequences.includes(44) && !origem.linkSequences.includes(46));
+  assert.equal(contar(ignorados, 'I_CAPTURA_ERRO_REGERADA'), 2);
 
-  assert.equal(contar(avisos, 'W_LEITOR_FLUXO_ERRO'), 2);
+  assert.equal(contar(avisos, 'W_LEITOR_FLUXO_ERRO'), 0);
   assert.ok(temItem(avisos, 'W_LEITOR_ATRIBUICAO_FORA_V1', 's4')); // Campo Formulário
   assert.ok(temItem(avisos, 'W_LEITOR_ATRIBUICAO_FORA_V1', 's12')); // Executor Atividade
   // "Todos os Usuários" só aparece em ProcessAttachmentSecurity (anexos), não em atividade:
   assert.equal(contar(avisos, 'W_LEITOR_ATRIBUICAO_FORA_V1'), 2);
 
-  // a v1 não modela o fluxo de erro: o validador acusa as duas capturas e para na fase 1
+  // o validador já não acusa as capturas (o que sobra da v1 do demo não tem relação com o erro)
   const r = await validarSpec(spec, { versaoAlvo: '2.0' });
-  assert.equal(r.ok, false);
-  assert.deepStrictEqual(
-    r.erros.map((e) => [e.codigo, e.caminho]),
-    [
-      ['E_TIPO_FORA_V1', `atividades[${spec.atividades.findIndex((a) => a.id === 's40')}].tipo`],
-      ['E_TIPO_FORA_V1', `atividades[${spec.atividades.findIndex((a) => a.id === 's42')}].tipo`],
-    ]
-  );
+  assert.ok(!r.erros.some((e) => e.codigo === 'E_TIPO_FORA_V1' && /captura_erro/.test(e.mensagem)), JSON.stringify(r.erros));
+  assert.ok(!r.erros.some((e) => e.codigo.startsWith('E_TRATAMENTO')), JSON.stringify(r.erros));
 });
 
 test('fixture sintética sintetico-paralelo-2.0 (montada à mão)', async () => {
@@ -181,10 +179,11 @@ test('fixture sintética sintetico-paralelo-2.0 (montada à mão)', async () => 
       { id: 's4', tipo: 'humana', nome: 'Revisar', responsavel: { tipo: 'papel', valor: 'revisor' }, posicao: { x: 300, y: 60 } },
       { id: 's5', tipo: 'humana', nome: 'Aprovar', responsavel: { tipo: 'pool_papel', valor: 'aprovador' }, posicao: { x: 300, y: 140 } },
       { id: 's6', tipo: 'gateway_paralelo_juncao', nome: 'Junção', posicao: { x: 400, y: 100 } },
-      { id: 's7', tipo: 'servico', nome: 'Integrar', execucao: 'automatizada', posicao: { x: 500, y: 100 } },
+      { id: 's7', tipo: 'servico', nome: 'Integrar', execucao: 'automatizada', tratamentoErro: 's12', posicao: { x: 500, y: 100 } },
       { id: 's9', tipo: 'gateway_exclusivo', nome: 'Aprovado?', posicao: { x: 600, y: 100 } },
       { id: 's10', tipo: 'fim', nome: 'Concluído', posicao: { x: 700, y: 60 } },
       { id: 's11', tipo: 'fim_terminativo', nome: 'Encerrado', posicao: { x: 700, y: 140 } },
+      { id: 's12', tipo: 'humana', nome: 'Tratar erro', responsavel: { tipo: 'pool_papel', valor: 'admin' }, posicao: { x: 520, y: 240 } },
     ],
     ligacoes: [
       { de: 's2', para: 's3' },
@@ -208,6 +207,7 @@ test('fixture sintética sintetico-paralelo-2.0 (montada à mão)', async () => 
         retorno: true,
       },
       { de: 's9', para: 's11', ordem: 2, condicao: { js: 'hAPI.getCardValue("status") != "A"' } },
+      { de: 's12', para: 's7' },
     ],
   });
 
@@ -227,9 +227,10 @@ test('fixture sintética sintetico-paralelo-2.0 (montada à mão)', async () => 
   // origem
   assert.equal(origem.processId, 'sinteticoParalelo');
   assert.equal(origem.versao, 3);
-  assert.deepStrictEqual(origem.sequencias, { s2: 2, s3: 3, s4: 4, s5: 5, s6: 6, s7: 7, s9: 9, s10: 10, s11: 11 });
+  assert.deepStrictEqual(origem.sequencias, { s2: 2, s3: 3, s4: 4, s5: 5, s6: 6, s7: 7, s9: 9, s10: 10, s11: 11, s12: 12 });
   assert.deepStrictEqual(origem.capturas, { s7: 8 });
-  assert.deepStrictEqual(origem.linkSequences, [20, 21, 22, 23, 24, 25, 26, 27, 28]);
+  assert.deepStrictEqual(origem.tratamentos, { s7: 29 });
+  assert.deepStrictEqual(origem.linkSequences, [20, 21, 22, 23, 24, 25, 26, 27, 28, 30]);
 });
 
 test('determinismo: duas leituras iguais e a entrada não muda', () => {
@@ -261,6 +262,55 @@ test('captura de erro: pai serviço executionType 2 ou sem parentSequence', () =
   assert.deepStrictEqual(spec.atividades.filter((a) => a.tipo === 'captura_erro').map((a) => a.id), ['s3', 's4']);
   assert.ok(temItem(avisos, 'W_LEITOR_CAPTURA_ERRO_PAI', 's3'));
   assert.ok(temItem(avisos, 'W_LEITOR_CAPTURA_ERRO_PAI', 's4'));
+});
+
+test('captura de erro: sem ligação, com 2 saídas, com entrada e com destino que é captura', () => {
+  const srv = { seq: 2, nome: 'Srv', bpmn: 82, exec: 1 };
+  const cap = { seq: 3, nome: 'Cap', bpmn: 43, parent: 2 };
+  const base = [ini, srv, cap, hum(4), hum(5), fim];
+
+  // sem ligação: descartada com aviso novo
+  let r = lerXmlProcesso(montarXml({ estados: base, ligacoes: [{ de: 1, para: 2 }, { de: 2, para: 99 }, { de: 4, para: 99 }, { de: 5, para: 99 }] }));
+  assert.ok(temItem(r.avisos, 'W_LEITOR_CAPTURA_SEM_TRATAMENTO', 's2'));
+  assert.ok(!('tratamentoErro' in r.spec.atividades[1]));
+  assert.deepStrictEqual(r.origem.capturas, { s2: 3 });
+  assert.ok(temItem(r.ignorados, 'I_CAPTURA_ERRO_REGERADA', 's3'));
+
+  // uma saída, nenhuma entrada: absorvida
+  r = lerXmlProcesso(montarXml({ estados: base, ligacoes: [{ de: 1, para: 2 }, { de: 2, para: 99 }, { de: 3, seq: 77, para: 4 }, { de: 4, para: 99 }, { de: 5, para: 99 }] }));
+  assert.equal(r.spec.atividades[1].tratamentoErro, 's4');
+  assert.deepStrictEqual(r.origem.tratamentos, { s2: 77 });
+  assert.ok(!r.origem.linkSequences.includes(77));
+  assert.deepStrictEqual(r.spec.atividades.filter((a) => a.tipo === 'captura_erro'), []);
+  assert.ok(!temItem(r.avisos, 'W_LEITOR_FLUXO_ERRO'));
+
+  // 2 saídas: fica captura_erro com o aviso reescrito
+  r = lerXmlProcesso(montarXml({ estados: base, ligacoes: [{ de: 1, para: 2 }, { de: 2, para: 99 }, { de: 3, para: 4 }, { de: 3, para: 5 }, { de: 4, para: 99 }, { de: 5, para: 99 }] }));
+  assert.deepStrictEqual(r.spec.atividades.filter((a) => a.tipo === 'captura_erro').map((a) => a.id), ['s3']);
+  assert.ok(temItem(r.avisos, 'W_LEITOR_FLUXO_ERRO', 's3'));
+  assert.match(r.avisos.find((a) => a.codigo === 'W_LEITOR_FLUXO_ERRO').mensagem, /uma única saída para a atividade de tratamento/);
+  assert.ok(!('tratamentoErro' in r.spec.atividades[1]));
+  assert.deepStrictEqual(r.origem.tratamentos, {});
+
+  // alguma entrada: fica captura_erro
+  r = lerXmlProcesso(montarXml({ estados: base, ligacoes: [{ de: 1, para: 2 }, { de: 2, para: 99 }, { de: 4, para: 3 }, { de: 3, para: 5 }, { de: 5, para: 99 }] }));
+  assert.ok(temItem(r.avisos, 'W_LEITOR_FLUXO_ERRO', 's3'));
+  assert.ok(r.spec.atividades.some((a) => a.id === 's3' && a.tipo === 'captura_erro'));
+});
+
+test('captura de erro: ligação com automaticLink ou returnPermited true não é absorvida', () => {
+  const srv = { seq: 2, nome: 'Srv', bpmn: 82, exec: 1 };
+  const cap = { seq: 3, nome: 'Cap', bpmn: 43, parent: 2 };
+  const estados = [ini, srv, cap, hum(4), fim];
+  const base = [{ de: 1, para: 2 }, { de: 2, para: 99 }, { de: 4, para: 99 }];
+  for (const [marca, campo] of [[{ auto: true }, 'automaticLink'], [{ ret: true }, 'returnPermited']]) {
+    const r = lerXmlProcesso(montarXml({ estados, ligacoes: [...base, { de: 3, para: 4, ...marca }] }));
+    assert.ok(r.spec.atividades.some((a) => a.id === 's3' && a.tipo === 'captura_erro'), campo);
+    assert.ok(!('tratamentoErro' in r.spec.atividades[1]), campo);
+    assert.deepStrictEqual(r.origem.tratamentos, {}, campo);
+    const w = r.avisos.find((a) => a.codigo === 'W_LEITOR_FLUXO_ERRO');
+    assert.ok(w && w.mensagem.includes(campo), campo);
+  }
 });
 
 test('serviço automatizado sem captura e serviço com executionType 0', () => {

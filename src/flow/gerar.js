@@ -227,17 +227,18 @@ function agruparLigacoes(spec, avisos) {
 const ehInteiroPositivo = (n) => Number.isInteger(n) && n >= 1;
 
 /**
- * Confere `origem`; devolve { sequencias: Map id->n, capturas: Map idServico->n, links: [n|null] por grupo emitido }.
+ * Confere `origem`; devolve { sequencias: Map id->n, capturas: Map idServico->n, links: [n|null] por grupo emitido,
+ * tratamentos: Map idServico->linkSequence da ligação captura -> tratamento }.
  * `origem.capturas` guarda o sequence da captura de erro de cada serviço automatizado.
  * `origem.linkSequences[i]` corresponde a `spec.ligacoes[i]`; cada ProcessLink usa o valor da
  * primeira ligação do seu grupo (OU), com aviso se as outras divergirem.
  */
 function conferirOrigem(origem, spec, grupos, erros, avisos) {
-  const saida = { sequencias: new Map(), capturas: new Map(), links: grupos.map(() => null) };
+  const saida = { sequencias: new Map(), capturas: new Map(), links: grupos.map(() => null), tratamentos: new Map() };
   if (origem === undefined || origem === null) return saida;
   const erro = (mensagem, caminho) => erros.push({ codigo: 'E_GERADOR_ORIGEM', mensagem, caminho });
   if (typeof origem !== 'object' || Array.isArray(origem)) {
-    erro('origem deve ser um objeto { sequencias, capturas, linkSequences }.', 'origem');
+    erro('origem deve ser um objeto { sequencias, capturas, linkSequences, tratamentos }.', 'origem');
     return saida;
   }
   const ids = new Set(spec.atividades.map((a) => a.id));
@@ -346,12 +347,54 @@ function conferirOrigem(origem, spec, grupos, erros, avisos) {
       });
     }
   }
+  const trat = origem.tratamentos;
+  if (trat !== undefined && trat !== null) {
+    if (typeof trat !== 'object' || Array.isArray(trat)) {
+      erro('origem.tratamentos deve ser um objeto { idServico: número }.', 'origem.tratamentos');
+    } else {
+      const servicosAuto = new Set(
+        spec.atividades.filter((a) => a.tipo === 'servico' && a.execucao === 'automatizada').map((a) => a.id)
+      );
+      const ocupados = new Map();
+      for (const [id, n] of saida.sequencias) ocupados.set(n, `atividade ${id}`);
+      for (const [id, n] of saida.capturas) ocupados.set(n, `captura de ${id}`);
+      saida.links.forEach((n) => {
+        if (n !== null) ocupados.set(n, 'linkSequence');
+      });
+      for (const [id, n] of Object.entries(trat)) {
+        const cam = `origem.tratamentos.${id}`;
+        if (!servicosAuto.has(id)) {
+          avisos.push({
+            codigo: 'W_GERADOR_ORIGEM_ID',
+            mensagem: `origem.tratamentos tem o id "${id}", que não é um serviço automatizado da spec; foi ignorado.`,
+            caminho: cam,
+          });
+          continue;
+        }
+        if (!ehInteiroPositivo(n)) {
+          erro(`O linkSequence do tratamento de "${id}" em origem deve ser inteiro maior ou igual a 1 (recebido: ${String(n)}).`, cam);
+        } else if (ocupados.has(n)) {
+          erro(`O número ${n} do tratamento de "${id}" está repetido em origem (${ocupados.get(n)}).`, cam);
+        } else {
+          ocupados.set(n, `tratamento de ${id}`);
+          saida.tratamentos.set(id, n);
+        }
+      }
+    }
+  }
   return saida;
 }
 
 /** Numera atividades, capturas de erro e ligações, em um contador único acima do maior número de origem. */
 function numerar(spec, grupos, org) {
-  let prox = Math.max(1, ...org.sequencias.values(), ...org.capturas.values(), ...org.links.filter((n) => n !== null)) + 1;
+  let prox =
+    Math.max(
+      1,
+      ...org.sequencias.values(),
+      ...org.capturas.values(),
+      ...org.tratamentos.values(),
+      ...org.links.filter((n) => n !== null)
+    ) + 1;
   const sequencias = {};
   const capturas = {}; // id do serviço -> sequence da captura
   for (const a of spec.atividades) {
@@ -361,7 +404,14 @@ function numerar(spec, grupos, org) {
     }
   }
   const links = grupos.map((_, i) => (org.links[i] !== null ? org.links[i] : prox++));
-  return { sequencias, capturas, links };
+  // ligação da captura de erro até a atividade de tratamento (uma por serviço automatizado), depois das normais
+  const tratamentos = {};
+  for (const a of spec.atividades) {
+    if (a.tipo === 'servico' && a.execucao === 'automatizada') {
+      tratamentos[a.id] = org.tratamentos.has(a.id) ? org.tratamentos.get(a.id) : prox++;
+    }
+  }
+  return { sequencias, capturas, links, tratamentos };
 }
 
 /* ------------------------------------------------------------------ */
@@ -394,6 +444,14 @@ export function colunasLayout(spec) {
       if (l.de === n && !coluna.has(l.para)) {
         entra(l.para, coluna.get(n) + 1);
         fila.push(l.para);
+      }
+    }
+    // o tratamento do erro de um serviço automatizado vem depois das ligações normais dele
+    const atual = ativs.find((a) => a.id === n);
+    if (atual && atual.tipo === 'servico' && atual.execucao === 'automatizada' && typeof atual.tratamentoErro === 'string') {
+      if (!coluna.has(atual.tratamentoErro) && ativs.some((a) => a.id === atual.tratamentoErro)) {
+        entra(atual.tratamentoErro, coluna.get(n) + 1);
+        fila.push(atual.tratamentoErro);
       }
     }
   }
@@ -633,6 +691,25 @@ export async function gerarXmlProcesso(spec, opcoes = {}) {
       versao
     )
   );
+
+  // ligação da captura de erro -> atividade de tratamento
+  spec.atividades.forEach((a) => {
+    if (!(a.tipo === 'servico' && a.execucao === 'automatizada')) return;
+    ligacoes.push(
+      montar(
+        'ProcessLink',
+        M_LIGACAO,
+        {
+          processLinkPK: pkNo('processLinkPK', PK.ligacao, { companyId, processId, version: 1, linkSequence: num.tratamentos[a.id] }),
+          returnPermited: false,
+          defaultLink: false,
+          initialStateSequence: num.capturas[a.id],
+          finalStateSequence: num.sequencias[a.tratamentoErro],
+        },
+        versao
+      )
+    );
+  });
 
   const condicoes = [];
   const regras = [];

@@ -6,6 +6,11 @@
  * Espelha `lerXmlProcesso` (ler.js): mesmo formato de retorno e os mesmos códigos W_LEITOR_* / I_*
  * quando o caso existe nos dois formatos. Usa o parser e o leitor de condições do vendor Fluiggers 3.0.1.
  * Scripts não são lidos aqui (vêm à parte). Síncrona; lança só quando o texto não é um .process legível.
+ *
+ * Captura de erro de serviço automatizado com uma única saída e nenhuma entrada, para uma atividade conhecida:
+ * é descartada e o serviço ganha `tratamentoErro: "s<destino>"`; `origem.capturas[sPai]` guarda o sequence da
+ * captura e `origem.tratamentos[sPai]` os dígitos finais do id do fluxo captura → tratamento. Esse fluxo não
+ * entra em `ligacoes` nem em `origem.linkSequences`.
  */
 import { TIPOS, OPERADORES, EXECUCAO } from './spec.js';
 import { carregarFluiggers } from './fluiggers.js';
@@ -90,6 +95,7 @@ export function lerProcess(texto) {
     versao: Number.isInteger(versaoNum) ? versaoNum : null,
     sequencias: {},
     capturas: {},
+    tratamentos: {},
     linkSequences: [],
   };
 
@@ -131,6 +137,33 @@ export function lerProcess(texto) {
     if (bpmnDe(e) === 43) capturasPorPai.add(sequenciaDoId(e.attributes.parentTask));
   }
 
+  // Captura de erro com tratamento: uma saída, nenhuma entrada, destino é atividade conhecida (não captura).
+  const marcaPorCaptura = new Map(); // seq da captura -> marcas da ligação que impedem a absorção
+  const tratamentoPorPai = new Map(); // seq do serviço -> { capSeq, destSeq, fluxo }
+  const fluxosDeTratamento = new Set(); // objetos de p.flows absorvidos
+  for (const e of estadoPorSeq.values()) {
+    if (bpmnDe(e) !== 43) continue;
+    const capSeq = seqPorId.get(e.id);
+    const paiSeq = sequenciaDoId(e.attributes.parentTask);
+    if (!ehServicoAutomatizado(estadoPorSeq.get(paiSeq)) || tratamentoPorPai.has(paiSeq)) continue;
+    const saidas = p.flows.filter((f) => sequenciaDoId(f.attributes.sourceRef) === capSeq);
+    const entradas = p.flows.filter((f) => sequenciaDoId(f.attributes.targetRef) === capSeq);
+    if (saidas.length !== 1 || entradas.length !== 0) continue;
+    const destSeq = sequenciaDoId(saidas[0].attributes.targetRef);
+    const dest = estadoPorSeq.get(destSeq);
+    if (!dest || bpmnDe(dest) === 43) continue;
+    const fa = saidas[0].attributes;
+    const marcas = ['permiteRetorno', 'fluxoAutomatico', 'defaultLink'].filter((c) => aparar(fa[c]).toLowerCase() === 'true');
+    const extras = camposNaoPadrao(fa, CONSUMIDOS_LIGACAO);
+    if (marcas.length > 0 || extras.length > 0) {
+      marcaPorCaptura.set(capSeq, [...marcas, ...extras].join(', '));
+      continue;
+    }
+    tratamentoPorPai.set(paiSeq, { capSeq, destSeq, fluxo: saidas[0] });
+    fluxosDeTratamento.add(saidas[0]);
+  }
+  const capturasAbsorvidas = new Set([...tratamentoPorPai.values()].map((t) => t.capSeq));
+
   /* ------------------------------ atividades ------------------------------ */
   const atividades = [];
   const tipoPorSeq = new Map();
@@ -153,18 +186,41 @@ export function lerProcess(texto) {
       const pai = estadoPorSeq.get(paiSeq);
       const paiOk = ehServicoAutomatizado(pai);
       const temLigacao = seqsComLigacao.has(seq);
+      if (capturasAbsorvidas.has(seq)) {
+        const t = tratamentoPorPai.get(paiSeq);
+        ign(
+          'I_CAPTURA_ERRO_REGERADA',
+          `Captura de erro ${id} do serviço s${paiSeq} descartada: o gerador a recria a partir de tratamentoErro (s${t.destSeq}).`,
+          id
+        );
+        origem.capturas[`s${paiSeq}`] = seq;
+        const linkSeq = sequenciaDoId(t.fluxo.id);
+        if (linkSeq !== null) origem.tratamentos[`s${paiSeq}`] = linkSeq;
+        continue;
+      }
       if (!temLigacao && paiOk) {
         ign(
           'I_CAPTURA_ERRO_REGERADA',
           `Captura de erro ${id} do serviço s${paiSeq} descartada: o gerador recria a captura de erro do serviço automatizado.`,
           id
         );
+        avi(
+          'W_LEITOR_CAPTURA_SEM_TRATAMENTO',
+          `O serviço automatizado s${paiSeq} não tem tratamento do erro (a captura não tem saída); indique tratamentoErro antes de gerar de novo.`,
+          `s${paiSeq}`
+        );
         origem.capturas[`s${paiSeq}`] = seq;
         continue;
       }
       tipo = 'captura_erro';
       if (temLigacao) {
-        avi('W_LEITOR_FLUXO_ERRO', `A captura de erro ${id} tem fluxo de tratamento; a v1 não modela o fluxo de erro.`, id);
+        avi(
+          'W_LEITOR_FLUXO_ERRO',
+          `A captura de erro ${id} tem ligações fora do formato da v1 (uma única saída para a atividade de tratamento)${
+            marcaPorCaptura.has(seq) ? `; a ligação tem: ${marcaPorCaptura.get(seq)}` : ''
+          }.`,
+          id
+        );
       }
       if (!paiOk) {
         avi(
@@ -255,6 +311,7 @@ export function lerProcess(texto) {
     const ordenada = { id: ativ.id, tipo: ativ.tipo, nome: ativ.nome };
     if (ativ.responsavel) ordenada.responsavel = ativ.responsavel;
     if (ativ.execucao) ordenada.execucao = ativ.execucao;
+    if (tratamentoPorPai.has(seq) && tipo === 'servico') ordenada.tratamentoErro = `s${tratamentoPorPai.get(seq).destSeq}`;
     if (ativ.posicao) ordenada.posicao = ativ.posicao;
     atividades.push(ordenada);
     tipoPorSeq.set(seq, tipo);
@@ -332,6 +389,7 @@ export function lerProcess(texto) {
   const ligacoes = [];
   const alvosUsados = new Set();
   for (const f of p.flows) {
+    if (fluxosDeTratamento.has(f)) continue;
     const fa = f.attributes;
     const de = sequenciaDoId(fa.sourceRef);
     const para = sequenciaDoId(fa.targetRef);

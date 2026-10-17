@@ -7,8 +7,11 @@ import { carregarFluiggers } from '../src/flow/fluiggers.js';
  *          gateway?: boolean}} o
  * Com gateway (padrão): início → humana → gateway →(regras E js, OU)→ fim; gateway →(padrão)→ cancelamento.
  * Sem gateway: início → humana → fim.
+ * `servico` (só com gateway: false) acrescenta humana → serviço automatizado (com captura de erro) → fim e uma
+ * segunda humana (tratamento): 'tratado' = captura → tratamento; 'sem_saida' = captura sem fluxo;
+ * 'duas_saidas' = captura → tratamento e → fim; 'com_entrada' = tratamento → captura além da saída.
  */
-export function montarProcessoSintetico({ id = 'sintetico', nome = 'Aprovar', atribuicao, gateway = true } = {}) {
+export function montarProcessoSintetico({ id = 'sintetico', nome = 'Aprovar', atribuicao, gateway = true, servico } = {}) {
   const F = carregarFluiggers();
   const E = F.editor;
   const tpl = F.templateCriacao;
@@ -55,6 +58,21 @@ export function montarProcessoSintetico({ id = 'sintetico', nome = 'Aprovar', at
     const fim = no('end', '60', 420, 100);
     lig(humana, fim);
     ids.fim = fim;
+    if (servico) {
+      const srv = no('task', '82', 300, 200);
+      texto = E.patchProcess(texto, srv, { name: 'Integrar', executionType: '1' }).text;
+      const rc = E.createAttachedErrorEvent(texto, { taskId: srv, x: 340, y: 255, templateText: tpl });
+      texto = rc.text;
+      const trata = no('task', '80', 300, 320);
+      texto = E.patchProcess(texto, trata, { name: 'Tratar erro' }).text;
+      lig(humana, srv);
+      lig(srv, fim);
+      lig(trata, fim);
+      if (servico !== 'sem_saida') lig(rc.elementId, trata);
+      if (servico === 'duas_saidas') lig(rc.elementId, fim);
+      if (servico === 'com_entrada') lig(trata, rc.elementId);
+      Object.assign(ids, { servico: srv, captura: rc.elementId, tratamento: trata });
+    }
   }
   const attr = atribuicao === undefined ? { mechanism: 'Pool Papel', mechanismConfiguration: { roleId: 'admin' } } : atribuicao;
   if (attr) {

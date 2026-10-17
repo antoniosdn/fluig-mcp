@@ -240,12 +240,15 @@ validador dela e relido contra a spec antes de gravar; ECM30 e SVG saem de `rege
 
 - Sem o conversor oficial instalado, o ECM30 vem do plano B com o aviso `W_ECM30_NAO_OFICIAL`. O plano B
   continua recusando um `.process` cuja leitura perderia comportamento (atribuição de Executor Atividade
-  ou Campo Formulário, fluxo de erro, fluxo por prazo); para esses, instale o conversor.
+  ou Campo Formulário, captura de erro fora do formato da v1, fluxo por prazo); para esses, instale o conversor.
 - Um `.process` existente e diferente nunca é sobrescrito sem `--sobrescrever` (o atual vai para
   `workflow/.resources/.backups/`). Escrita atômica.
 - Depois de criado, o `.process` é a fonte da verdade: edite no VS Code e use `fluig_flow_regenerate`
   (ou `fluig-mcp regenerar`) e `fluig_flow_deploy` com `processo`.
 - A spec com `condicao.nome` é recusada (o `.process` não guarda o nome da condição).
+- Todo serviço automatizado exige `tratamentoErro`: o id de uma atividade **humana** que trata o erro. O
+  gerador cria a captura de erro do serviço e a liga a essa atividade (a ligação não entra em `ligacoes`);
+  sem saída na captura, o editor da extensão acusa "Elemento sem fluxo de saída".
 
 ## Armadilhas conhecidas do Fluig
 

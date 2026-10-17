@@ -104,6 +104,7 @@ export function carregarFluiggers({ dir = DIR_VENDOR } = {}) {
     validateProcess: m41558.validateProcess,
     buildProcessScaffold: m80072.buildProcessScaffold,
     renderProcessImageSvg: m15201.renderProcessImageSvg,
+    problemasConfiguracao: exigir('33496').elementConfigurationIssues,
     editor: exigir('51077'),
     gateway: exigir('71939'),
     roteador: exigir('85565'),

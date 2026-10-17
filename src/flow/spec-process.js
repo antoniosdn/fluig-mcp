@@ -1,12 +1,14 @@
 /**
  * Spec v1 → arquivo `.process` (BPMN do Fluig Studio / Fluiggers), passo 5.3.
  *
- *   const { texto, ids, fluxos, posicoes, origem, avisos } = specParaProcess(spec, { versaoAlvo });
+ *   const { texto, ids, fluxos, fluxosTratamento, posicoes, origem, avisos } = specParaProcess(spec, { versaoAlvo });
  *
  * Monta o `.process` SÓ pelas funções do vendor Fluiggers 3.0.1 (`carregarFluiggers`); a única
  * transformação de texto é o escape ASCII final (contorno da 3.0.1). Síncrono, sem disco.
  * Pressupõe a spec já validada (`validarSpec` é de quem chama). Antes de devolver, passa por dois
- * portões: validação estrutural do vendor (P1) e auto-conferência `lerProcess` × spec (P2).
+ * portões: validação estrutural do vendor (P1), pendências de configuração do editor (P1b, a mesma checagem
+ * que a extensão mostra como "CONFIG") e auto-conferência `lerProcess` × spec (P2).
+ * A captura de erro do serviço automatizado sai ligada à atividade de `tratamentoErro` por um fluxo comum.
  */
 import { TIPOS, OPERADORES, EXECUCAO } from './spec.js';
 import { ErroFluxo } from './erro.js';
@@ -86,6 +88,25 @@ function calcularPosicoes(spec, avisos) {
     }
   });
   return pos;
+}
+
+/**
+ * Pendências de configuração que o editor da extensão mostra como "CONFIG" (módulo 33496 do vendor).
+ * @param {string} texto conteúdo do .process
+ * @returns {Array<{id: string, mensagem: string}>} [] = sem pendência
+ */
+export function conferirConfiguracao(texto) {
+  const F = carregarFluiggers();
+  const p = F.parseProcess(texto);
+  const todos = [...(p.elements || []), ...(p.flows || [])];
+  const mapa = new Map(todos.map((e) => [e.id, e]));
+  const saida = [];
+  for (const e of todos) {
+    const r = F.problemasConfiguracao(e, mapa);
+    const lista = Array.isArray(r) ? r : r && typeof r === 'object' ? Object.values(r) : r ? [r] : [];
+    for (const m of lista) if (m) saida.push({ id: e.id, mensagem: String(m) });
+  }
+  return saida;
 }
 
 /**
@@ -176,6 +197,15 @@ export function specParaProcess(spec, { versaoAlvo } = {}) {
     return flowId;
   });
 
+  // ligação da captura de erro -> atividade de tratamento (um fluxo comum, criado pelo vendor)
+  const fluxosTratamento = {};
+  for (const a of spec.atividades) {
+    if (!(a.tipo === 'servico' && a.execucao === 'automatizada')) continue;
+    fluxosTratamento[a.id] = vendor('ligação de tratamento', a.id, () =>
+      aplicar(ed.createSequenceFlow(texto, { sourceId: capturas[a.id], targetId: ids[a.tratamentoErro], bendpoints: [], ...T })).flowId
+    );
+  }
+
   // condições e saída padrão dos gateways exclusivos (depois de todas as ligações)
   for (const a of spec.atividades) {
     if (a.tipo !== 'gateway_exclusivo') continue;
@@ -233,16 +263,28 @@ export function specParaProcess(spec, { versaoAlvo } = {}) {
     avisos.push({ codigo: 'W_PROCESS_POS_AVISO', mensagem: `${w.code}: ${w.message || w.title || ''}`.trim() });
   }
 
+  // P1b: pendências de configuração que o editor da extensão mostra (ex.: captura de erro sem saída)
+  const pendencias = conferirConfiguracao(texto);
+  if (pendencias.length > 0) {
+    throw new ErroFluxo(
+      'E_PROCESS_CONFIG',
+      `O .process gerado tem pendência no editor:\n- ${pendencias.map((x) => `${x.id}: ${x.mensagem}`).join('\n- ')}`
+    );
+  }
+
   // origem no formato de gerarXmlProcesso (conferirOrigem)
   const sequencias = {};
   for (const a of spec.atividades) sequencias[a.id] = digitosFinais(ids[a.id]);
   const origemCapturas = {};
   for (const [id, elementId] of Object.entries(capturas)) origemCapturas[id] = digitosFinais(elementId);
+  const origemTratamentos = {};
+  for (const [id, flowId] of Object.entries(fluxosTratamento)) origemTratamentos[id] = digitosFinais(flowId);
   const origem = {
     processId: spec.processId,
     versao: 1,
     sequencias,
     capturas: origemCapturas,
+    tratamentos: origemTratamentos,
     linkSequences: fluxos.map(digitosFinais),
   };
 
@@ -262,7 +304,7 @@ export function specParaProcess(spec, { versaoAlvo } = {}) {
     );
   }
 
-  return { texto, ids, fluxos, posicoes, origem, avisos };
+  return { texto, ids, fluxos, fluxosTratamento, posicoes, origem, avisos };
 }
 
 /* ------------------------------------------------------------------ */
@@ -317,6 +359,8 @@ export function compararSpecProcess(spec, lida, { ids, posicoes }) {
     const rb = b.responsavel ? `${b.responsavel.tipo}:${b.responsavel.valor}` : null;
     if (ra !== rb) dif(`atividades.${a.id}.responsavel`, ra, rb);
     if ((a.execucao ?? null) !== (b.execucao ?? null)) dif(`atividades.${a.id}.execucao`, a.execucao ?? null, b.execucao ?? null);
+    const te = a.tratamentoErro !== undefined ? sid(a.tratamentoErro) : null;
+    if (te !== (b.tratamentoErro ?? null)) dif(`atividades.${a.id}.tratamentoErro`, te, b.tratamentoErro ?? null);
     const pe = posicoes && posicoes[a.id] ? posicoes[a.id] : a.posicao;
     const po = b.posicao;
     if (pe && (!po || pe.x !== po.x || pe.y !== po.y)) dif(`atividades.${a.id}.posicao`, pe, po ?? null);

@@ -24,3 +24,11 @@ Os arquivos ficam sem CRLF (LF), como no original.
 No gateway exclusivo `sequence` 9 (`Aprovado?`), `<automatic>false</automatic>` virou `true`: o conversor e o export do
 servidor sempre gravam `automatic=true` nos gateways exclusivos (bpmnType 120) e o gerador faz o mesmo. A fixture tinha
 sido montada à mão com `false`. Foi a única linha alterada.
+
+## Ajuste na fixture sintética (passo 5.4)
+
+`sintetico-paralelo-2.0.ecm30.xml` tinha a captura de erro (sequence 8) sem ligação. Como o serviço automatizado passou a
+exigir `tratamentoErro`, ganhou o tratamento: um `ProcessState` humano novo (sequence 12, `Pool Papel` `admin`), o
+`ProcessLink` captura → tratamento (linkSequence 29) e o `ProcessLink` tratamento → serviço (linkSequence 30). Assim a ida
+e volta 2.0 continua `igual`. O caso "captura sem ligação" fica coberto por XML em linha em `flow-ler.test.js`.
+`spec-completa.json` e `spec-ou.json` também ganharam a atividade `trata` (tratamento do erro de `erp`).

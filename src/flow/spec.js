@@ -10,6 +10,7 @@
  *       id: string único, tipo: uma chave de TIPOS, nome: string,
  *       responsavel?: { tipo: 'papel' | 'pool_papel', valor: string },  // só em humana
  *       execucao?: 'automatizada' | 'imediata',                          // só e obrigatório em servico
+ *       tratamentoErro?: id, // só e obrigatório em servico automatizada: atividade humana que trata o erro (saída da captura)
  *       posicao?: { x: número, y: número }
  *     }],
  *     ligacoes: [{
@@ -26,6 +27,9 @@
  * Regras de uma condição combinam por E. OU = várias ligações do mesmo
  * gateway para o mesmo destino, cada uma com sua ordem.
  * `valorTipo` ausente equivale a "fixo". `condicao.nome` só com versaoAlvo 2.0.
+ * A captura de erro do serviço automatizado é criada pelo gerador e ligada a `tratamentoErro`
+ * (essa ligação não entra em `ligacoes`). Ordem das chaves da atividade: id, tipo, nome, responsavel,
+ * execucao, tratamentoErro, posicao.
  *
  * Este módulo só tem constantes (sem lógica), com o mapa para os números do ECM30.
  */
@@ -47,10 +51,14 @@ export const TIPOS = {
 export const TIPOS_FORA_V1 = {
   espera: 'a configuração do timer ainda não está confirmada, o gerador não saberia emitir',
   subprocesso: 'subprocesso não faz parte da v1',
-  captura_erro: 'o gerador cria a captura de erro sozinho para serviço automatizado',
+  captura_erro:
+    'o gerador cria a captura de erro sozinho para serviço automatizado; indique a atividade que trata o erro em tratamentoErro',
   mensagem: 'eventos de mensagem não fazem parte da v1',
   sinal: 'eventos de sinal não fazem parte da v1',
 };
+
+/** Tipos de atividade aceitos como tratamento do erro de um serviço automatizado (v1). */
+export const TIPOS_TRATAMENTO = ['humana'];
 
 /** Tipos que encerram o fluxo. */
 export const TIPOS_FIM = ['fim', 'cancelamento', 'fim_terminativo'];

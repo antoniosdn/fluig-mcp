@@ -65,19 +65,22 @@ test('sintetico-paralelo-2.0 (2.0): ida e volta igual (captura de erro mantém o
   const r = await compararIdaEVolta(fixture('sintetico-paralelo-2.0'), { versaoAlvo: '2.0' });
   assert.equal(r.resultado, 'igual', JSON.stringify(r.diferencas));
   assert.deepEqual(r.diferencas, []);
-  assert.deepEqual(r.cobertura.atividades, { total: 10, v1: 10, capturasRegeradas: 1, foraV1: {} });
+  assert.deepEqual(r.cobertura.atividades, { total: 11, v1: 11, capturasRegeradas: 1, foraV1: {} });
+  // a ligação captura -> tratamento conta como ligação v1
+  assert.equal(r.cobertura.ligacoes.v1, r.cobertura.ligacoes.total);
 });
 
-test('rpa (1.8.2): fora da v1 por captura de erro com fluxo; cobertura calculada mesmo assim', async () => {
+test('rpa (1.8.2): captura de erro com tratamento volta igual; cobertura 16/16 e 16/16', async () => {
   const r = await compararIdaEVolta(fixture('rpa'), { versaoAlvo: '1.8.2' });
-  assert.equal(r.resultado, 'fora_v1');
-  assert.deepEqual(r.motivos.map((m) => m.codigo), ['E_TIPO_FORA_V1', 'E_TIPO_FORA_V1']);
+  assert.equal(r.resultado, 'igual', JSON.stringify([...r.motivos, ...r.diferencas]));
+  assert.deepEqual(r.motivos, []);
   assert.deepEqual(r.diferencas, []);
   const c = r.cobertura;
-  assert.deepEqual(c.atividades, { total: 16, v1: 14, capturasRegeradas: 0, foraV1: { captura_erro: 2 } });
+  assert.deepEqual(c.atividades, { total: 16, v1: 16, capturasRegeradas: 2, foraV1: {} });
   assert.equal(c.ligacoes.total, 16);
-  assert.equal(c.ligacoes.v1, 14);
-  assert.deepEqual(c.perdas, {});
+  assert.equal(c.ligacoes.v1, 16);
+  // campos que a v1 não guarda (iguais nas duas pontas): contados, sem virar diferença
+  assert.equal(c.perdas['ProcessLink.name'], 4);
 });
 
 test('XML ilegível vira resultado erro com E_LEITOR (não lança)', async () => {
@@ -241,8 +244,8 @@ test('formatarCobertura: cabeçalho, uma linha por XML e o total', async () => {
   assert.match(linhas[0], /^processo\s+resultado\s+ativ\s+lig\s+cond\s+regras\s+atrib\s+fora da v1/);
   assert.match(linhas[1], /^medicao_contrato\s+igual\s+8\/8\s+8\/8\s+3\/3\s+3\/3\s+1\/2\s+/);
   assert.match(linhas[1], /Executor Atividade 1/);
-  assert.match(linhas[2], /^rpa\s+fora_v1\s+14\/16\s+14\/16\s+4\/4\s+0\/0\s+5\/7\s+captura_erro 2/);
+  assert.match(linhas[2], /^rpa\s+igual\s+16\/16\s+16\/16\s+4\/4\s+0\/0\s+5\/7\s+/);
   assert.match(linhas[3], /^quebrado\s+erro\s+-\s+-\s+-\s+-\s+-\s+E_LEITOR/);
-  assert.match(linhas[4], /^TOTAL\s+3 xml\s+22\/24\s+22\/24\s+7\/7\s+3\/3\s+6\/9\s+/);
-  assert.match(linhas[4], /igual 1; fora_v1 1; erro 1/);
+  assert.match(linhas[4], /^TOTAL\s+3 xml\s+24\/24\s+24\/24\s+7\/7\s+3\/3\s+6\/9\s+/);
+  assert.match(linhas[4], /igual 2; erro 1/);
 });
