@@ -368,20 +368,13 @@ function numerar(spec, grupos, org) {
 /* Layout                                                              */
 /* ------------------------------------------------------------------ */
 
-/** Posição por id: a da spec (arredondada) ou a calculada por colunas (largura 250, linha 150). */
-function posicionar(spec, avisos) {
+/**
+ * Coluna e linha de cada atividade na grade do layout: coluna = distância (em ligações) a partir do
+ * início, busca em largura na ordem do array; linha = ordem de chegada na coluna.
+ * @returns {Map<string, {coluna: number, linha: number}>}
+ */
+export function colunasLayout(spec) {
   const ativs = spec.atividades;
-  const comPosicao = ativs.filter((a) => a.posicao !== undefined).length;
-  if (comPosicao > 0 && comPosicao < ativs.length) {
-    avisos.push({
-      codigo: 'W_GERADOR_POSICAO_PARCIAL',
-      mensagem:
-        'Só parte das atividades tem posicao; as outras foram posicionadas pelo gerador e podem cair em cima das informadas.',
-      caminho: 'atividades',
-    });
-  }
-
-  // colunas: distância (em ligações) a partir do início, busca em largura na ordem do array
   const coluna = new Map();
   const porColuna = [];
   const entra = (id, c) => {
@@ -405,6 +398,27 @@ function posicionar(spec, avisos) {
     }
   }
   for (const a of ativs) if (!coluna.has(a.id)) entra(a.id, 0); // defensivo: o validador exige alcançabilidade
+  const saida = new Map();
+  for (const a of ativs) {
+    const c = coluna.get(a.id);
+    saida.set(a.id, { coluna: c, linha: porColuna[c].indexOf(a.id) });
+  }
+  return saida;
+}
+
+/** Posição por id: a da spec (arredondada) ou a calculada por colunas (largura 250, linha 150). */
+function posicionar(spec, avisos) {
+  const ativs = spec.atividades;
+  const comPosicao = ativs.filter((a) => a.posicao !== undefined).length;
+  if (comPosicao > 0 && comPosicao < ativs.length) {
+    avisos.push({
+      codigo: 'W_GERADOR_POSICAO_PARCIAL',
+      mensagem:
+        'Só parte das atividades tem posicao; as outras foram posicionadas pelo gerador e podem cair em cima das informadas.',
+      caminho: 'atividades',
+    });
+  }
+  const grade = colunasLayout(spec);
 
   const pos = {};
   ativs.forEach((a, i) => {
@@ -419,8 +433,8 @@ function posicionar(spec, avisos) {
       }
       pos[a.id] = { x: Math.round(x), y: Math.round(y) };
     } else {
-      const c = coluna.get(a.id);
-      pos[a.id] = { x: 100 + 250 * c, y: 100 + 150 * porColuna[c].indexOf(a.id) };
+      const g = grade.get(a.id);
+      pos[a.id] = { x: 100 + 250 * g.coluna, y: 100 + 150 * g.linha };
     }
   });
   return pos;

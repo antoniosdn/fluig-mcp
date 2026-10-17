@@ -686,6 +686,20 @@ async function fase3(spec, lookups, ctx) {
 /* ------------------------------------------------------------------ */
 
 /**
+ * Só a fase 3 (papéis e campos das condições no servidor), sem as fases 1 e 2: serve para conferir uma spec
+ * lida de um `.process` que pode ter coisas fora da v1. Exige apenas `atividades` e `ligacoes` como listas.
+ * @returns {Promise<{ok: boolean, erros: Array, avisos: Array}>}
+ */
+export async function conferirNoServidor(spec, lookups = {}) {
+  const ctx = novoContexto();
+  if (!ehObjeto(spec) || !Array.isArray(spec.atividades) || !Array.isArray(spec.ligacoes)) {
+    return { ok: true, erros: [], avisos: [] };
+  }
+  await fase3(spec, lookups || {}, ctx);
+  return { ok: ctx.erros.length === 0, erros: ctx.erros, avisos: ctx.avisos };
+}
+
+/**
  * Valida a spec v1. Nunca lança por spec ruim e nunca altera a spec.
  * @param {*} spec
  * @param {{versaoAlvo: '1.8.2'|'2.0', lookups?: {papelExiste?: Function, camposFormulario?: Function}}} opcoes

@@ -1,7 +1,7 @@
-// Subcomandos do fluig-mcp: regenerar e instalar-conversor (src/flow/cli-fluxo.js). Offline.
+// Subcomandos do fluig-mcp: regenerar, gerar e instalar-conversor (src/flow/cli-fluxo.js). Offline.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { executarCli } from '../src/flow/cli-fluxo.js';
@@ -22,6 +22,9 @@ test('uso errado → 2', async () => {
     ['regenerar', 'a.process', '--proprio', '--oficial'],
     ['regenerar', 'a.process', '--desconhecida'],
     ['regenerar', 'a.process', '--cache'],
+    ['gerar'],
+    ['gerar', 'spec.json'],
+    ['gerar', 'spec.json', '--projeto', '/tmp/x', '--proprio', '--oficial'],
     ['instalar-conversor'],
     ['instalar-conversor', '--de', 'x', '--baixar', '1.8.2.0'],
     ['instalar-conversor', 'solto'],
@@ -93,5 +96,35 @@ test('instalar-conversor --de com pasta que não é de um Studio conhecido → 1
   } finally {
     rmSync(cache, { recursive: true, force: true });
     rmSync(fonte, { recursive: true, force: true });
+  }
+});
+
+test('gerar <spec> --projeto <tmp> --proprio --cache <vazio> → 0 e três caminhos; segunda vez sem mudança; spec ilegível → 1', async () => {
+  const raiz = tmp();
+  const cache = tmp();
+  try {
+    const spec = join(raiz, 'spec.json');
+    copyFileSync(new URL('./fixtures/flow/spec-completa.json', import.meta.url), spec);
+    const projeto = join(raiz, 'projeto');
+    mkdirSync(projeto);
+    const c = captura();
+    assert.equal(await executarCli(['gerar', spec, '--projeto', projeto, '2.0', '--proprio', '--cache', cache], c.opcoes), 0);
+    assert.equal(c.out[0], 'conversor: gerador próprio (plano B)');
+    assert.ok(c.out.some((l) => /^process: .*gerador_oraculo\.process \(\d+ bytes, gravado\)$/.test(l)));
+    assert.ok(c.out.some((l) => /^ecm30: .*gerador_oraculo\.ecm30\.xml \(\d+ bytes, gravado\)$/.test(l)));
+    assert.ok(c.out.some((l) => /^svg: .*gerador_oraculo\.processimage\.svg \(\d+ bytes, gravado\)$/.test(l)));
+    assert.ok(c.out.some((l) => l.startsWith('aviso W_ECM30_NAO_OFICIAL: ')));
+    assert.deepEqual(c.err, []);
+
+    const d = captura();
+    assert.equal(await executarCli(['gerar', spec, '--projeto', projeto, '2.0', '--proprio', '--cache', cache], d.opcoes), 0);
+    assert.ok(d.out.filter((l) => l.includes('sem mudança')).length === 3);
+
+    const e = captura();
+    assert.equal(await executarCli(['gerar', join(raiz, 'nao-existe.json'), '--projeto', projeto, '--proprio', '--cache', cache], e.opcoes), 1);
+    assert.ok(e.err[0].startsWith('erro E_SPEC: '));
+  } finally {
+    rmSync(raiz, { recursive: true, force: true });
+    rmSync(cache, { recursive: true, force: true });
   }
 });

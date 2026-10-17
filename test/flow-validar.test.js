@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { validarSpec } from '../src/flow/validar.js';
+import { validarSpec, conferirNoServidor } from '../src/flow/validar.js';
 
 function specBase() {
   return {
@@ -468,4 +468,31 @@ test('padrao: várias ligações OU para o mesmo destino padrão não repetem; d
   assert.equal(temProblema(await v(ou), 'E_PADRAO_REPETIDO'), false);
   const dois = com((s) => { s.ligacoes[2].padrao = true; s.ligacoes[3].padrao = true; });
   assert.equal(temProblema(await v(dois), 'E_PADRAO_REPETIDO', 'atividades[2]'), true);
+});
+
+test('conferirNoServidor: papel inexistente, campo inexistente, lookup lançando, sem lookup, spec sem listas', async () => {
+  const spec = {
+    formId: 7,
+    atividades: [{ id: 'h', tipo: 'humana', nome: 'H', responsavel: { tipo: 'papel', valor: 'gestor' } }, { id: 'x', tipo: 'qualquer_coisa', nome: 'fora da v1' }],
+    ligacoes: [{ de: 'h', para: 'x', condicao: { regras: [{ campo: 'valor', op: 'igual', valor: '1' }] } }],
+  };
+  const bom = { papelExiste: async () => true, camposFormulario: async () => ['valor'] };
+  assert.deepEqual(await conferirNoServidor(spec, bom), { ok: true, erros: [], avisos: [] });
+
+  const r1 = await conferirNoServidor(spec, { ...bom, papelExiste: async () => false });
+  assert.equal(r1.ok, false);
+  assert.equal(r1.erros[0].codigo, 'E_PAPEL_INEXISTENTE');
+
+  const r2 = await conferirNoServidor(spec, { ...bom, camposFormulario: async () => ['outro'] });
+  assert.equal(r2.erros[0].codigo, 'E_CAMPO_INEXISTENTE');
+
+  const r3 = await conferirNoServidor(spec, { ...bom, papelExiste: async () => { throw new Error('caiu'); } });
+  assert.equal(r3.ok, true);
+  assert.equal(r3.avisos[0].codigo, 'W_LOOKUP_FALHOU');
+
+  const r4 = await conferirNoServidor(spec, {});
+  assert.deepEqual(r4.avisos.map((a) => a.codigo), ['W_SEM_LOOKUP', 'W_SEM_LOOKUP']);
+
+  assert.deepEqual(await conferirNoServidor({ atividades: 'x' }, bom), { ok: true, erros: [], avisos: [] });
+  assert.deepEqual(await conferirNoServidor(null, bom), { ok: true, erros: [], avisos: [] });
 });

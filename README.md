@@ -111,11 +111,13 @@ Este servidor pode alterar dados de produção. Ele foi construído assumindo is
 passa a recusá-las. Recomendado para agente rodando sem supervisão.
 
 ```bash
-FLUIG_READONLY=1 node server.js --list   # 64 ferramentas, nenhuma de escrita
+FLUIG_READONLY=1 node server.js --list   # 65 ferramentas, nenhuma de escrita no servidor
 ```
 
 **Gerador de fluxo.** `fluig_flow_deploy` recusa `env:"prod"` nesta versão, exige `confirm: true`,
-confere a versão do servidor (recusa `versaoAlvo` maior) e publica sem SVG.
+confere a versão do servidor (recusa `versaoAlvo` maior) e publica o ECM30 com o SVG do desenho.
+`FLUIG_READONLY` trata só do **servidor**: `fluig_flow_generate` e `fluig_flow_regenerate` continuam
+visíveis nesse modo e só gravam em disco com caminho explícito (`projeto`/`processo`).
 
 **Confirmação explícita.** Toda ferramenta de escrita exige `confirm: true`. As destrutivas
 (`fluig_process_convert_instances`, `fluig_rm_save_record`) devolvem um **dry-run** com o plano
@@ -190,14 +192,16 @@ Para reportar vulnerabilidade, veja [SECURITY.md](SECURITY.md).
 (padrão `/ascendra_log_viewer/api/logs`; outra base em `FLUIG_LOG_API`) e devolve o resultado
 resumido: linhas cortadas, repetidas agrupadas e total limitado a cerca de 30 mil caracteres.
 
-**Gerador de fluxo** (4)
-`fluig_flow_validate` · `fluig_flow_generate` · `fluig_flow_read` · **!** `fluig_flow_deploy`
+**Gerador de fluxo** (5)
+`fluig_flow_validate` · `fluig_flow_generate` · `fluig_flow_regenerate` · `fluig_flow_read` · **!** `fluig_flow_deploy`
 
 Geram o processo a partir de uma spec JSON (v1; formato no comentário de `src/flow/spec.js`), para
 as versões alvo `1.8.2` e `2.0`. `validate` confere a spec e, no servidor (só leitura), papéis,
-campos do formulário e versão do Fluig; `generate` devolve o XML ECM30; `read` exporta um processo
-existente como spec, com `origem` para gerar de novo sem renumerar; `deploy` publica uma versão
-(sem SVG). Fora da v1: subprocesso, eventos de mensagem e sinal, timer, atribuição fora de papel e SVG.
+campos do formulário e versão do Fluig; `generate` devolve `.process` + ECM30 + SVG (veja abaixo);
+`regenerate` refaz ECM30 e SVG de um `.process` editado; `read` exporta um processo existente como
+spec, com `origem` para gerar de novo sem renumerar; `deploy` publica uma versão com o SVG, a partir
+de uma `spec` ou de um `.process` (`processo`). Fora da v1: subprocesso, eventos de mensagem e sinal,
+timer e atribuição fora de papel.
 
 Descrição completa de cada uma: `node server.js --list`.
 
@@ -223,6 +227,25 @@ fluig-mcp regenerar <arquivo.process> [1.8.2|2.0] [--proprio | --oficial] [--nao
   `W_ECM30_NAO_OFICIAL`. Ele recusa processo cuja leitura perderia comportamento (atribuição fora da v1,
   tipo de atividade fora da v1 etc.). O `.process` nunca é alterado; o ECM30 anterior vai para
   `.resources/.backups/` antes de ser trocado.
+
+## Gerar `.process` + ECM30 + SVG a partir de uma spec
+
+```
+fluig-mcp gerar <spec.json> --projeto <pasta> [1.8.2|2.0] [--sobrescrever] [--oficial | --proprio] [--cache <pasta>] [--java <caminho>]
+```
+
+Ou a ferramenta `fluig_flow_generate` (com `projeto` grava; sem ele só devolve o conteúdo). O `.process`
+é montado só pelas funções da extensão Fluiggers 3.0.1 (a mesma edição do VS Code), conferido pelo
+validador dela e relido contra a spec antes de gravar; ECM30 e SVG saem de `regenerar`.
+
+- Sem o conversor oficial instalado, o ECM30 vem do plano B com o aviso `W_ECM30_NAO_OFICIAL`. O plano B
+  continua recusando um `.process` cuja leitura perderia comportamento (atribuição de Executor Atividade
+  ou Campo Formulário, fluxo de erro, fluxo por prazo); para esses, instale o conversor.
+- Um `.process` existente e diferente nunca é sobrescrito sem `--sobrescrever` (o atual vai para
+  `workflow/.resources/.backups/`). Escrita atômica.
+- Depois de criado, o `.process` é a fonte da verdade: edite no VS Code e use `fluig_flow_regenerate`
+  (ou `fluig-mcp regenerar`) e `fluig_flow_deploy` com `processo`.
+- A spec com `condicao.nome` é recusada (o `.process` não guarda o nome da condição).
 
 ## Armadilhas conhecidas do Fluig
 

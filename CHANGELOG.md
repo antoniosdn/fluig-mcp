@@ -12,7 +12,8 @@ versionamento [SemVer](https://semver.org/lang/pt-BR/).
 - Gerador de fluxo: `fluig_flow_validate`, `fluig_flow_generate`, `fluig_flow_read` e
   `fluig_flow_deploy`. Geram o XML ECM30 de um processo a partir de uma spec JSON (versões alvo
   1.8.2 e 2.0), conferem papéis, campos e versão no servidor e publicam pelo SOAP oficial. O
-  deploy recusa `prod`, exige `confirm` e publica sem SVG.
+  deploy recusa `prod` e exige `confirm`.
+- Gerar `.process` + ECM30 + SVG a partir da spec v1 (`fluig-mcp gerar`, `fluig_flow_generate`, nova `fluig_flow_regenerate`): o `.process` sai das funções da Fluiggers 3.0.1, com conferência antes de gravar, escrita atômica e backup. `fluig_flow_deploy` passa a publicar o ECM30 com o SVG, a partir de uma spec ou de um `.process`.
 - Regenerar ECM30 e SVG de um `.process` sem VS Code nem Eclipse: `fluig-mcp regenerar` (conversor
   oficial do Studio pela ponte Java da Fluiggers, ou gerador próprio como plano B) e
   `fluig-mcp instalar-conversor` (cache local em `~/.fluig-mcp`, conferido por SHA-256; nenhum JAR

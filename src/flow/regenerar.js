@@ -165,7 +165,7 @@ async function oficial({ abs, parsed, versao, studio, tabela, opcoes, nomeBase }
   }
 }
 
-async function gravarAtomico(destino, buf) {
+export async function gravarAtomico(destino, buf) {
   const tmp = `${destino}.tmp-${process.pid}-${randomBytes(4).toString('hex')}`;
   try {
     await writeFile(tmp, buf);

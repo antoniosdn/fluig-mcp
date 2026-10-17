@@ -80,13 +80,13 @@ test('--help e --version não exigem credencial', () => {
   assert.match(v.trim(), /^\d+\.\d+\.\d+$/);
 });
 
-test('ferramentas do gerador de fluxo: as 4 na lista; só o deploy some em somente leitura', () => {
+test('ferramentas do gerador de fluxo: as 5 na lista; só o deploy some em somente leitura', () => {
   const todas = nomes(listar());
-  for (const n of ['fluig_flow_validate', 'fluig_flow_generate', 'fluig_flow_read', 'fluig_flow_deploy']) {
+  for (const n of ['fluig_flow_validate', 'fluig_flow_generate', 'fluig_flow_regenerate', 'fluig_flow_read', 'fluig_flow_deploy']) {
     assert.ok(todas.includes(n), `${n} não está na lista`);
   }
   const leitura = nomes(listar({ FLUIG_READONLY: '1' }));
-  for (const n of ['fluig_flow_validate', 'fluig_flow_generate', 'fluig_flow_read']) {
+  for (const n of ['fluig_flow_validate', 'fluig_flow_generate', 'fluig_flow_regenerate', 'fluig_flow_read']) {
     assert.ok(leitura.includes(n), `${n} deveria estar em somente leitura`);
   }
   assert.ok(!leitura.includes('fluig_flow_deploy'), 'fluig_flow_deploy vazou em somente leitura');

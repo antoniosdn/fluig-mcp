@@ -5,10 +5,13 @@
  * entra por parâmetro e os testes usam um cliente falso.
  *
  * Só usa chamadas que o client já tem: restGet, searchDataset, exportProcessXml, deployProcess.
+ * `fluig_flow_generate` e `fluig_flow_regenerate` só escrevem em disco local, com caminho explícito.
  */
-import { validarSpec } from './validar.js';
+import { validarSpec, conferirNoServidor } from './validar.js';
 import { gerarXmlProcesso } from './gerar.js';
 import { lerXmlProcesso } from './ler.js';
+import { gerarArtefatos, AVISOS_DO_PLANO_B_REDUNDANTES } from './artefatos.js';
+import { regenerar } from './regenerar.js';
 
 const msg = (e) => (e && e.message ? e.message : String(e));
 
@@ -99,15 +102,6 @@ function lerSpec(spec) {
   }
 }
 
-async function lerModelo(client, modeloProcessId) {
-  if (modeloProcessId === undefined || modeloProcessId === null || modeloProcessId === '') return undefined;
-  try {
-    return await client.exportProcessXml(modeloProcessId);
-  } catch (e) {
-    throw new Error(`Não foi possível ler o processo-modelo ${modeloProcessId}: ${msg(e)}`);
-  }
-}
-
 /** Versão do servidor sem lançar: { versao } ou { falha }. */
 async function tentarVersao(client) {
   try {
@@ -145,23 +139,55 @@ export async function flowValidate(client, args) {
   return { ok: erros.length === 0, versaoAlvo, versaoServidor: sv.versao || null, erros, avisos };
 }
 
-/** Gera o XML (e a versão do servidor como aviso). Compartilhado com o deploy. */
-async function gerar(client, args, spec) {
-  const modelo = await lerModelo(client, args.modeloProcessId);
-  const r = await gerarXmlProcesso(spec, {
-    versaoAlvo: args.versaoAlvo,
-    lookups: criarLookups(client),
-    modelo,
-    origem: args.origem,
-  });
-  return r;
+/**
+ * Ganchos de teste (Java e tabela de conversor falsos). Vêm só do 3º parâmetro das funções, que o server.js
+ * não preenche; nunca de `args`, que a MCP repassa sem filtro.
+ */
+function ganchos(internos) {
+  const i = internos || {};
+  return { executar: i.executar, java: i.java, _tabela: i._tabela, _dirPonte: i._dirPonte };
 }
 
-/** Gera o XML ECM30 a partir da spec. Não grava nada. */
-export async function flowGenerate(client, args) {
+const CONVERSORES_ARG = ['auto', 'oficial', 'proprio'];
+
+function conferirConversor(conversor) {
+  if (conversor === undefined || conversor === null) return 'auto';
+  if (!CONVERSORES_ARG.includes(conversor)) throw new Error(`conversor "${conversor}" inválido; use auto, oficial ou proprio.`);
+  return conversor;
+}
+
+/** Recorta o resultado de um artefato para a saída da ferramenta. */
+function artefatoSaida(a, incluirConteudo) {
+  const o = { caminho: a.caminho, bytes: a.bytes, alterado: a.alterado };
+  if ('backup' in a) o.backup = a.backup;
+  if (incluirConteudo) o.conteudo = a.conteudo;
+  return o;
+}
+
+/**
+ * Gera `.process` + ECM30 + SVG a partir da spec. Só grava em disco com `projeto` (caminho absoluto);
+ * nunca escreve no servidor. `modeloProcessId` e `origem` não se aplicam (o ECM30 sai do `.process`).
+ */
+export async function flowGenerate(client, args, internos = {}) {
   const spec = lerSpec(args.spec);
-  const r = await gerar(client, args, spec);
-  const avisos = [...(r.avisos || [])];
+  const conversor = conferirConversor(args.conversor);
+  const avisos = [];
+  if (args.modeloProcessId !== undefined && args.modeloProcessId !== null && args.modeloProcessId !== '') {
+    avisos.push({ codigo: 'W_MODELO_IGNORADO', mensagem: 'modeloProcessId é ignorado: o ECM30 sai do .process, com categoria, volume e período do esqueleto.', caminho: 'modeloProcessId' });
+  }
+  if (args.origem !== undefined && args.origem !== null) {
+    avisos.push({ codigo: 'W_ORIGEM_IGNORADA', mensagem: 'origem é ignorada: os números saem do .process gerado.', caminho: 'origem' });
+  }
+  const r = await gerarArtefatos(spec, {
+    versaoAlvo: args.versaoAlvo,
+    projeto: args.projeto,
+    sobrescrever: args.sobrescrever === true,
+    conversor,
+    lookups: criarLookups(client),
+    cache: args.cache,
+    ...ganchos(internos),
+  });
+  avisos.push(...(r.avisos || []));
   const sv = await tentarVersao(client);
   if (sv.falha) {
     avisos.push({ codigo: 'W_VERSAO_SERVIDOR', mensagem: `Versão do servidor não conferida: ${sv.falha}`, caminho: 'versaoAlvo' });
@@ -173,11 +199,36 @@ export async function flowGenerate(client, args) {
     });
   }
   const saida = { ok: r.ok, versaoAlvo: args.versaoAlvo, versaoServidor: sv.versao || null };
-  if (r.erros) saida.erros = r.erros;
+  if (!r.ok) {
+    saida.erros = r.erros;
+    saida.avisos = avisos;
+    return saida;
+  }
+  const incluir = args.incluirConteudo !== undefined ? args.incluirConteudo === true : !args.projeto;
+  saida.conversor = r.conversor;
+  saida.ids = r.ids;
+  saida.process = artefatoSaida(r.process, incluir);
+  saida.ecm30 = artefatoSaida(r.ecm30, incluir);
+  saida.svg = artefatoSaida(r.svg, incluir);
   saida.avisos = avisos;
-  if (r.xml !== undefined) saida.xml = r.xml;
-  if (r.sequencias !== undefined) saida.sequencias = r.sequencias;
+  saida.xml = r.ecm30.conteudo;
   return saida;
+}
+
+/** Regenera ECM30 e SVG de um `.process` existente (depois de editá-lo no VS Code). Não toca o servidor. */
+export async function flowRegenerate(client, args, internos = {}) {
+  const conversor = conferirConversor(args.conversor);
+  const r = await regenerar(args.processo, { versao: args.versaoAlvo, conversor, cache: args.cache, ...ganchos(internos) });
+  const incluir = args.incluirConteudo === true;
+  return {
+    ok: true,
+    processo: r.processo,
+    versaoAlvo: args.versaoAlvo,
+    conversor: r.conversor,
+    ecm30: artefatoSaida(r.ecm30, incluir),
+    svg: artefatoSaida(r.svg, incluir),
+    avisos: r.avisos,
+  };
 }
 
 /** Exporta um processo e devolve a spec v1 equivalente. */
@@ -195,8 +246,17 @@ export async function flowRead(client, args) {
   };
 }
 
-/** Publica uma versão do processo. As três primeiras travas não tocam o cliente. */
-export async function flowDeploy(client, args) {
+const BLOQUEIAM = ['W_LOOKUP_FALHOU', 'W_SEM_LOOKUP', 'W_SEM_FORMULARIO'];
+const ERROS_BLOQUEIAM = ['E_PAPEL_INEXISTENTE', 'E_CAMPO_INEXISTENTE'];
+
+/** processId do ProcessDefinition (a descrição também aparece em ProcessDefinitionVersionPK/processId). */
+function processIdDoEcm30(xml) {
+  const m = /<processDefinitionPK>[\s\S]*?<processId>([^<]+)<\/processId>/.exec(xml);
+  return m ? m[1] : null;
+}
+
+/** Publica uma versão do processo. As travas (prod, confirm, novo, spec/processo) não tocam o cliente. */
+export async function flowDeploy(client, args, internos = {}) {
   if (args.env === 'prod' || client.isProd) {
     throw new Error('fluig_flow_deploy não publica em produção nesta versão. Use env="teste".');
   }
@@ -206,7 +266,13 @@ export async function flowDeploy(client, args) {
   if (typeof args.novo !== 'boolean') {
     throw new Error('Informe novo=true (processo novo) ou novo=false (nova versão de processo existente).');
   }
-  const spec = lerSpec(args.spec);
+  const temSpec = args.spec !== undefined && args.spec !== null;
+  const temProcesso = args.processo !== undefined && args.processo !== null && args.processo !== '';
+  if (temSpec === temProcesso) {
+    throw new Error('Informe exatamente uma entrada: spec (gera o .process num temporário) ou processo (caminho de <projeto>/workflow/diagrams/<x>.process).');
+  }
+  const conversor = conferirConversor(args.conversor);
+  const spec = temSpec ? lerSpec(args.spec) : null;
 
   let sv;
   try {
@@ -218,28 +284,62 @@ export async function flowDeploy(client, args) {
     throw new Error(`versaoAlvo ${args.versaoAlvo} é maior que a versão do servidor (${sv}); publicação recusada.`);
   }
 
-  const r = await gerar(client, args, spec);
-  if (!r.ok) return { publicado: false, motivo: 'spec com erro', erros: r.erros, avisos: r.avisos };
-  const avisos = r.avisos || [];
-  if (avisos.some((a) => a.codigo === 'W_LOOKUP_FALHOU' || a.codigo === 'W_SEM_LOOKUP' || a.codigo === 'W_SEM_FORMULARIO')) {
-    return { publicado: false, motivo: 'papel ou campo não conferido no servidor', avisos };
+  let ecm30;
+  let svg;
+  let processId;
+  let info;
+  let avisos;
+  if (spec) {
+    const r = await gerarArtefatos(spec, { versaoAlvo: args.versaoAlvo, conversor, lookups: criarLookups(client), cache: args.cache, ...ganchos(internos) });
+    if (!r.ok) return { publicado: false, motivo: 'spec com erro', erros: r.erros, avisos: r.avisos };
+    avisos = r.avisos || [];
+    if (avisos.some((a) => BLOQUEIAM.includes(a.codigo))) {
+      return { publicado: false, motivo: 'papel ou campo não conferido no servidor', avisos };
+    }
+    ecm30 = r.ecm30.conteudo;
+    svg = r.svg.conteudo;
+    processId = spec.processId;
+    info = r.conversor;
+  } else {
+    const r = await regenerar(args.processo, { versao: args.versaoAlvo, conversor, cache: args.cache, ...ganchos(internos) });
+    avisos = r.avisos.filter((a) => !AVISOS_DO_PLANO_B_REDUNDANTES.includes(a.codigo));
+    ecm30 = r.ecm30.conteudo;
+    svg = r.svg.conteudo;
+    info = r.conversor;
+    processId = processIdDoEcm30(ecm30);
+    if (!processId) throw new Error('Não foi possível ler o processId do ECM30 gerado a partir do .process.');
+    // confere papéis e campos no servidor com a spec lida do ECM30 (o que está fora da v1 vira aviso)
+    const lida = lerXmlProcesso(ecm30);
+    for (const a of lida.avisos) avisos.push({ codigo: a.codigo, mensagem: a.mensagem, caminho: a.ref });
+    const conf = await conferirNoServidor(lida.spec, criarLookups(client));
+    const bloqueiam = [...conf.erros, ...conf.avisos].filter((x) => ERROS_BLOQUEIAM.includes(x.codigo) || BLOQUEIAM.includes(x.codigo));
+    // só informativo: tudo que o validarSpec acusa na spec lida vira aviso e não bloqueia
+    const v = await validarSpec(lida.spec, { versaoAlvo: args.versaoAlvo, lookups: {} });
+    for (const x of [...v.erros, ...v.avisos]) {
+      if (x.codigo === 'W_SEM_LOOKUP' || x.codigo === 'W_SEM_FORMULARIO') continue; // da conferência no servidor
+      avisos.push(x);
+    }
+    if (bloqueiam.length > 0) {
+      return { publicado: false, motivo: 'papel ou campo não conferido no servidor', erros: conf.erros, avisos: [...avisos, ...conf.avisos] };
+    }
   }
 
-  const d = await client.deployProcess(r.xml, {
-    processId: spec.processId,
+  const d = await client.deployProcess(ecm30, {
+    processId,
     isNew: args.novo,
     overWrite: true,
     confirm: true,
+    svgXml: svg,
   });
   return {
     publicado: true,
-    processId: spec.processId,
+    processId,
     novo: args.novo,
     versaoAlvo: args.versaoAlvo,
     versaoServidor: sv,
+    conversor: info,
     imported: d && d.imported,
     released: d && d.released,
     avisos,
-    semSvg: 'Publicado sem SVG: o processo roda, mas a tela de acompanhamento fica sem desenho (passo 0, §5 de fluxo-tipos.md).',
   };
 }
