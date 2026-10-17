@@ -41,7 +41,9 @@ function xmlLigacao(l, i) {
     }</linkSequence></processLinkPK>` +
     `<returnPermited>${l.ret ? 'true' : 'false'}</returnPermited>` +
     `<initialStateSequence>${l.de}</initialStateSequence><finalStateSequence>${l.para}</finalStateSequence>` +
-    `<automaticLink>${l.auto ? 'true' : 'false'}</automaticLink></ProcessLink>`
+    `<automaticLink>${l.auto ? 'true' : 'false'}</automaticLink>` +
+    (l.padrao ? '<defaultLink>true</defaultLink>' : '') +
+    '</ProcessLink>'
   );
 }
 
@@ -226,6 +228,7 @@ test('fixture sintética sintetico-paralelo-2.0 (montada à mão)', async () => 
   assert.equal(origem.processId, 'sinteticoParalelo');
   assert.equal(origem.versao, 3);
   assert.deepStrictEqual(origem.sequencias, { s2: 2, s3: 3, s4: 4, s5: 5, s6: 6, s7: 7, s9: 9, s10: 10, s11: 11 });
+  assert.deepStrictEqual(origem.capturas, { s7: 8 });
   assert.deepStrictEqual(origem.linkSequences, [20, 21, 22, 23, 24, 25, 26, 27, 28]);
 });
 
@@ -472,4 +475,49 @@ test('sequence inválido: descartada, ref ProcessState e nome só na mensagem', 
   const a = avisos.find((i) => i.codigo === 'W_LEITOR_SEQUENCE_INVALIDA');
   assert.equal(a.ref, 'ProcessState');
   assert.ok(a.mensagem.includes('Sem seq'));
+});
+
+test('origem.capturas: vazio quando não há captura de erro descartada', () => {
+  const { origem } = lerXmlProcesso(fixture('medicao_contrato'));
+  assert.deepStrictEqual(origem.capturas, {});
+});
+
+test('gateway: defaultLink vira padrao; sem condição não avisa; com condição guarda os dois', () => {
+  const { spec, avisos, ignorados } = lerXmlProcesso(
+    montarXml({
+      estados: [ini, gw, fim, { seq: 7, nome: 'Alt', bpmn: 60 }, { seq: 8, nome: 'Alt2', bpmn: 60 }],
+      ligacoes: [
+        { seq: 10, de: 1, para: 5 },
+        { seq: 11, de: 5, para: 99 },
+        { seq: 12, de: 5, para: 7, padrao: true },
+        { seq: 13, de: 5, para: 8, padrao: true },
+      ],
+      condicoes: [
+        { seq: 5, ordem: 1, dest: 99, tipo: 0, cond: 'a == 1' },
+        { seq: 5, ordem: 2, dest: 8, tipo: 0, cond: 'true' },
+      ],
+    })
+  );
+  assert.deepStrictEqual(spec.ligacoes, [
+    { de: 's1', para: 's5' },
+    { de: 's5', para: 's99', ordem: 1, condicao: { js: 'a == 1' } },
+    { de: 's5', para: 's7', padrao: true },
+    { de: 's5', para: 's8', ordem: 2, condicao: { js: 'true' }, padrao: true },
+  ]);
+  assert.ok(!temItem(avisos, 'W_LEITOR_GATEWAY_SEM_CONDICAO'));
+  assert.ok(!ignorados.some((i) => i.codigo === 'I_LIGACAO_CAMPOS'));
+});
+
+test('defaultLink fora de gateway exclusivo: aviso e ignora', () => {
+  const { spec, avisos } = lerXmlProcesso(
+    montarXml({
+      estados: [ini, hum(2), fim],
+      ligacoes: [
+        { seq: 10, de: 1, para: 2, padrao: true },
+        { seq: 11, de: 2, para: 99 },
+      ],
+    })
+  );
+  assert.deepStrictEqual(spec.ligacoes[0], { de: 's1', para: 's2' });
+  assert.ok(temItem(avisos, 'W_LEITOR_PADRAO_FORA_GATEWAY', 'ligacao s1→s2'));
 });

@@ -223,7 +223,7 @@
       <joint>false</joint>
       <engineAllocationId></engineAllocationId>
       <initialState>false</initialState>
-      <automatic>false</automatic>
+      <automatic>true</automatic>
       <positionX>600</positionX>
       <positionY>100</positionY>
       <stateType>1</stateType>

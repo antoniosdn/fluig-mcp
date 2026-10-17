@@ -150,7 +150,7 @@ function lerModelo(modelo, erros) {
 /**
  * Agrupa as ligações em ProcessLink: uma por ligação, exceto saídas repetidas de gateway
  * exclusivo para o mesmo destino (OU), que dividem o ProcessLink da primeira ocorrência.
- * Devolve [{ indice, indices, retorno, de, para }] na ordem de emissão.
+ * Devolve [{ indice, indices, retorno, de, para, padrao }] na ordem de emissão.
  */
 function agruparLigacoes(spec, avisos) {
   const tipoPorId = new Map(spec.atividades.map((a) => [a.id, a.tipo]));
@@ -164,13 +164,14 @@ function agruparLigacoes(spec, avisos) {
       if (g) {
         g.retornos.push(ret);
         g.indices.push(i);
+        if (l.padrao === true) g.padrao = true;
         return;
       }
-      const novo = { indice: i, indices: [i], de: l.de, para: l.para, retornos: [ret] };
+      const novo = { indice: i, indices: [i], de: l.de, para: l.para, retornos: [ret], padrao: l.padrao === true };
       porChave.set(chave, novo);
       grupos.push(novo);
     } else {
-      grupos.push({ indice: i, indices: [i], de: l.de, para: l.para, retornos: [ret] });
+      grupos.push({ indice: i, indices: [i], de: l.de, para: l.para, retornos: [ret], padrao: false });
     }
   });
   return grupos.map((g) => {
@@ -182,7 +183,7 @@ function agruparLigacoes(spec, avisos) {
         caminho: `ligacoes[${g.indice}]`,
       });
     }
-    return { indice: g.indice, indices: g.indices, de: g.de, para: g.para, retorno: algum };
+    return { indice: g.indice, indices: g.indices, de: g.de, para: g.para, retorno: algum, padrao: g.padrao };
   });
 }
 
@@ -193,16 +194,17 @@ function agruparLigacoes(spec, avisos) {
 const ehInteiroPositivo = (n) => Number.isInteger(n) && n >= 1;
 
 /**
- * Confere `origem`; devolve { sequencias: Map id->n, links: [n|null] por grupo emitido }.
+ * Confere `origem`; devolve { sequencias: Map id->n, capturas: Map idServico->n, links: [n|null] por grupo emitido }.
+ * `origem.capturas` guarda o sequence da captura de erro de cada serviço automatizado.
  * `origem.linkSequences[i]` corresponde a `spec.ligacoes[i]`; cada ProcessLink usa o valor da
  * primeira ligação do seu grupo (OU), com aviso se as outras divergirem.
  */
 function conferirOrigem(origem, spec, grupos, erros, avisos) {
-  const saida = { sequencias: new Map(), links: grupos.map(() => null) };
+  const saida = { sequencias: new Map(), capturas: new Map(), links: grupos.map(() => null) };
   if (origem === undefined || origem === null) return saida;
   const erro = (mensagem, caminho) => erros.push({ codigo: 'E_GERADOR_ORIGEM', mensagem, caminho });
   if (typeof origem !== 'object' || Array.isArray(origem)) {
-    erro('origem deve ser um objeto { sequencias, linkSequences }.', 'origem');
+    erro('origem deve ser um objeto { sequencias, capturas, linkSequences }.', 'origem');
     return saida;
   }
   const ids = new Set(spec.atividades.map((a) => a.id));
@@ -233,6 +235,36 @@ function conferirOrigem(origem, spec, grupos, erros, avisos) {
       }
     }
   }
+  const caps = origem.capturas;
+  if (caps !== undefined && caps !== null) {
+    if (typeof caps !== 'object' || Array.isArray(caps)) {
+      erro('origem.capturas deve ser um objeto { idServico: número }.', 'origem.capturas');
+    } else {
+      const servicosAuto = new Set(
+        spec.atividades.filter((a) => a.tipo === 'servico' && a.execucao === 'automatizada').map((a) => a.id)
+      );
+      const ocupados = new Map([...saida.sequencias].map(([id, n]) => [n, `atividade ${id}`]));
+      for (const [id, n] of Object.entries(caps)) {
+        const cam = `origem.capturas.${id}`;
+        if (!servicosAuto.has(id)) {
+          avisos.push({
+            codigo: 'W_GERADOR_ORIGEM_ID',
+            mensagem: `origem.capturas tem o id "${id}", que não é um serviço automatizado da spec; foi ignorado.`,
+            caminho: cam,
+          });
+          continue;
+        }
+        if (!ehInteiroPositivo(n)) {
+          erro(`O sequence da captura de "${id}" em origem deve ser inteiro maior ou igual a 1 (recebido: ${String(n)}).`, cam);
+        } else if (ocupados.has(n)) {
+          erro(`O sequence ${n} da captura de "${id}" está repetido em origem (${ocupados.get(n)}).`, cam);
+        } else {
+          ocupados.set(n, `captura de ${id}`);
+          saida.capturas.set(id, n);
+        }
+      }
+    }
+  }
   const links = origem.linkSequences;
   if (links !== undefined && links !== null) {
     if (!Array.isArray(links)) {
@@ -250,6 +282,7 @@ function conferirOrigem(origem, spec, grupos, erros, avisos) {
       };
       const usados = new Map(); // número -> índice do grupo
       const atividades = new Map([...saida.sequencias].map(([id, n]) => [n, id]));
+      const capturasPorNumero = new Map([...saida.capturas].map(([id, n]) => [n, id]));
       grupos.forEach((g, k) => {
         const valores = g.indices.map(valorEm);
         const escolhido = valores.find((n) => n !== null);
@@ -268,6 +301,11 @@ function conferirOrigem(origem, spec, grupos, erros, avisos) {
           erro(`O linkSequence ${escolhido} está repetido em origem.linkSequences (grupos diferentes).`, cam);
         } else if (atividades.has(escolhido)) {
           erro(`O número ${escolhido} aparece em origem como atividade (${atividades.get(escolhido)}) e como linkSequence.`, cam);
+        } else if (capturasPorNumero.has(escolhido)) {
+          erro(
+            `O número ${escolhido} aparece em origem como captura de erro (${capturasPorNumero.get(escolhido)}) e como linkSequence.`,
+            cam
+          );
         } else {
           usados.set(escolhido, k);
           saida.links[k] = escolhido;
@@ -280,12 +318,14 @@ function conferirOrigem(origem, spec, grupos, erros, avisos) {
 
 /** Numera atividades, capturas de erro e ligações, em um contador único acima do maior número de origem. */
 function numerar(spec, grupos, org) {
-  let prox = Math.max(1, ...org.sequencias.values(), ...org.links.filter((n) => n !== null)) + 1;
+  let prox = Math.max(1, ...org.sequencias.values(), ...org.capturas.values(), ...org.links.filter((n) => n !== null)) + 1;
   const sequencias = {};
   const capturas = {}; // id do serviço -> sequence da captura
   for (const a of spec.atividades) {
     sequencias[a.id] = org.sequencias.has(a.id) ? org.sequencias.get(a.id) : prox++;
-    if (a.tipo === 'servico' && a.execucao === 'automatizada') capturas[a.id] = prox++;
+    if (a.tipo === 'servico' && a.execucao === 'automatizada') {
+      capturas[a.id] = org.capturas.has(a.id) ? org.capturas.get(a.id) : prox++;
+    }
   }
   const links = grupos.map((_, i) => (org.links[i] !== null ? org.links[i] : prox++));
   return { sequencias, capturas, links };
@@ -537,6 +577,7 @@ export async function gerarXmlProcesso(spec, opcoes = {}) {
       {
         processLinkPK: pkNo('processLinkPK', PK.ligacao, { companyId, processId, version: 1, linkSequence: num.links[i] }),
         returnPermited: g.retorno,
+        defaultLink: g.padrao,
         initialStateSequence: num.sequencias[g.de],
         finalStateSequence: num.sequencias[g.para],
       },
@@ -550,6 +591,7 @@ export async function gerarXmlProcesso(spec, opcoes = {}) {
     if (spec.atividades[idxAtiv.get(l.de)].tipo !== 'gateway_exclusivo') return;
     const sequence = num.sequencias[l.de];
     const c = l.condicao;
+    if (c === undefined) return; // saída padrão sem condição
     const porRegras = Array.isArray(c.regras);
     condicoes.push(
       montar(

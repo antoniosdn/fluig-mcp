@@ -138,6 +138,9 @@ const casosErro = [
     s.ligacoes.push({ de: 'ped', para: 'apr' });
   }, 'atividades[1]'],
   ['E_VERSAO_RECURSO', (s) => { s.ligacoes[2].condicao.nome = 'Aprovado'; }, 'ligacoes[2].condicao.nome', '1.8.2'],
+  ['E_TIPO_CAMPO', (s) => { s.ligacoes[3].padrao = 'sim'; }, 'ligacoes[3].padrao'],
+  ['E_PADRAO_FORA_GATEWAY', (s) => { s.ligacoes[0].padrao = true; }, 'ligacoes[0].padrao'],
+  ['E_PADRAO_REPETIDO', (s) => { s.ligacoes[2].padrao = true; s.ligacoes[3].padrao = true; }, 'atividades[2]'],
 ];
 
 for (const [codigo, mut, caminho, versao] of casosErro) {
@@ -437,4 +440,32 @@ test('erros trazem codigo, mensagem em texto e caminho', async () => {
     assert.equal(typeof p.caminho, 'string');
   }
   assert.equal(r.ok, false);
+});
+
+test('padrao: saída padrão do gateway pode vir sem condicao e ordem; só com um dos dois continua erro', async () => {
+  const semAmbos = com((s) => { delete s.ligacoes[3].condicao; delete s.ligacoes[3].ordem; s.ligacoes[3].padrao = true; });
+  const r = await v(semAmbos);
+  assert.equal(r.ok, true, JSON.stringify(r.erros));
+  // padrao com condicao e ordem também vale
+  assert.equal((await v(com((s) => { s.ligacoes[3].padrao = true; }))).ok, true);
+  // padrao: false não muda nada
+  assert.equal((await v(com((s) => { s.ligacoes[3].padrao = false; }))).ok, true);
+  // padrao com condicao mas sem ordem, e com ordem mas sem condicao: erro
+  const semOrdem = com((s) => { s.ligacoes[3].padrao = true; delete s.ligacoes[3].ordem; });
+  assert.equal(temProblema(await v(semOrdem), 'E_GATEWAY_SEM_CONDICAO', 'ligacoes[3]'), true);
+  const semCond = com((s) => { s.ligacoes[3].padrao = true; delete s.ligacoes[3].condicao; });
+  assert.equal(temProblema(await v(semCond), 'E_GATEWAY_SEM_CONDICAO', 'ligacoes[3]'), true);
+  // sem padrao, sem condicao continua erro
+  const sem = com((s) => { delete s.ligacoes[3].condicao; delete s.ligacoes[3].ordem; });
+  assert.equal(temProblema(await v(sem), 'E_GATEWAY_SEM_CONDICAO', 'ligacoes[3]'), true);
+});
+
+test('padrao: várias ligações OU para o mesmo destino padrão não repetem; dois destinos sim', async () => {
+  const ou = com((s) => {
+    s.ligacoes[3].padrao = true;
+    s.ligacoes.push({ de: 'gv', para: 'can', ordem: 3, padrao: true, condicao: { js: 'true' } });
+  });
+  assert.equal(temProblema(await v(ou), 'E_PADRAO_REPETIDO'), false);
+  const dois = com((s) => { s.ligacoes[2].padrao = true; s.ligacoes[3].padrao = true; });
+  assert.equal(temProblema(await v(dois), 'E_PADRAO_REPETIDO', 'atividades[2]'), true);
 });

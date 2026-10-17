@@ -17,7 +17,9 @@
  *       ordem?: inteiro >= 1,       // só em saída de gateway_exclusivo
  *       condicao?: { regras: [{ campo, op, valor?, valorTipo? }], nome? }
  *               | { js: string, nome? },   // só em saída de gateway_exclusivo
- *       retorno?: boolean           // returnPermited
+ *       retorno?: boolean,          // returnPermited
+ *       padrao?: true               // saída padrão de gateway_exclusivo (ProcessLink.defaultLink);
+ *                                   // pode vir sem condicao/ordem
  *     }]
  *   }
  *

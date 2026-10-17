@@ -5,7 +5,9 @@
  *
  * - spec: spec v1 (formato de spec.js), sem campos extras.
  * - origem: o que só serve para ida e volta (fora da spec):
- *     { processId, versao, sequencias: { [idAtividade]: number }, linkSequences: number[] }
+ *     { processId, versao, sequencias: { [idAtividade]: number }, capturas: { [idServico]: number },
+ *       linkSequences: number[] }
+ *   `capturas` guarda o sequence da captura de erro (sem ligação) descartada de cada serviço automatizado.
  * - ignorados: informação do XML que a v1 não guarda (perda esperada).
  * - avisos: inconsistência no XML, ou perda que muda o comportamento do processo.
  *   Item = { codigo, mensagem, ref }.
@@ -50,7 +52,13 @@ const CONSUMIDOS_ATIVIDADE = [
   'engineAllocationConfiguration',
   'executionType',
 ];
-const CONSUMIDOS_LIGACAO = ['initialStateSequence', 'finalStateSequence', 'returnPermited', 'automaticLink'];
+const CONSUMIDOS_LIGACAO = [
+  'initialStateSequence',
+  'finalStateSequence',
+  'returnPermited',
+  'automaticLink',
+  'defaultLink',
+];
 
 // bpmnType -> chave de TIPOS
 const TIPO_POR_BPMN = {};
@@ -158,6 +166,7 @@ export function lerXmlProcesso(xml) {
     processId,
     versao: Number.isInteger(versaoNum) ? versaoNum : null,
     sequencias: {},
+    capturas: {},
     linkSequences: [],
   };
 
@@ -232,6 +241,7 @@ export function lerXmlProcesso(xml) {
           id
         );
         descartada = true;
+        origem.capturas[`s${pai.seq}`] = e.seq;
       } else {
         tipo = 'captura_erro';
         if (temLigacao) {
@@ -449,6 +459,7 @@ export function lerXmlProcesso(xml) {
       if (ordem !== undefined) saida.ordem = ordem;
       if (condicao !== undefined) saida.condicao = condicao;
       if (retorno) saida.retorno = true;
+      if (padrao) saida.padrao = true;
       ligacoes.push(saida);
       origem.linkSequences.push(linkSeqValor);
     };
@@ -468,6 +479,16 @@ export function lerXmlProcesso(xml) {
       ign('I_LIGACAO_CAMPOS', `Campos da ligação ${rot} que a spec v1 não guarda: ${extras.join(', ')}.`, ref);
     }
 
+    let padrao = aparar(textoDe(nl, 'defaultLink')).toLowerCase() === 'true';
+    if (padrao && tipoPorSeq.get(de) !== 'gateway_exclusivo') {
+      avi(
+        'W_LEITOR_PADRAO_FORA_GATEWAY',
+        `A ligação ${rot} está marcada como padrão (defaultLink) mas não sai de gateway exclusivo; a marca foi ignorada.`,
+        ref
+      );
+      padrao = false;
+    }
+
     const l = base();
     if (tipoPorSeq.get(de) === 'gateway_exclusivo') {
       const chave = `${de}->${para}`;
@@ -485,7 +506,7 @@ export function lerXmlProcesso(xml) {
         .filter((c) => c.seq === de && c.destino === para)
         .sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
       if (doDestino.length === 0) {
-        avi('W_LEITOR_GATEWAY_SEM_CONDICAO', `A saída ${rot} do gateway não tem condição.`, ref);
+        if (!padrao) avi('W_LEITOR_GATEWAY_SEM_CONDICAO', `A saída ${rot} do gateway não tem condição.`, ref);
         finalizar(l, undefined, undefined);
         continue;
       }

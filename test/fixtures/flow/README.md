@@ -18,3 +18,9 @@ Conferência feita ao copiar:
 - o diff contra o original só tem linhas de `eventDescription`.
 
 Os arquivos ficam sem CRLF (LF), como no original.
+
+## Ajuste na fixture sintética (passo 4)
+
+No gateway exclusivo `sequence` 9 (`Aprovado?`), `<automatic>false</automatic>` virou `true`: o conversor e o export do
+servidor sempre gravam `automatic=true` nos gateways exclusivos (bpmnType 120) e o gerador faz o mesmo. A fixture tinha
+sido montada à mão com `false`. Foi a única linha alterada.

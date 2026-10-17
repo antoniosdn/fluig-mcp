@@ -228,7 +228,7 @@ function fase1Atividade(a, i, cam, primeiroId, tipoPorId, ctx) {
 }
 
 function fase1Ligacao(l, cam, ids, versao, ctx) {
-  chavesDesconhecidas(l, ['de', 'para', 'ordem', 'condicao', 'retorno'], cam, ctx);
+  chavesDesconhecidas(l, ['de', 'para', 'ordem', 'condicao', 'retorno', 'padrao'], cam, ctx);
 
   const de = exigirTexto(l, 'de', cam, ctx);
   const para = exigirTexto(l, 'para', cam, ctx);
@@ -246,6 +246,9 @@ function fase1Ligacao(l, cam, ids, versao, ctx) {
   }
   if (l.retorno !== undefined && typeof l.retorno !== 'boolean') {
     ctx.erro('E_TIPO_CAMPO', `${cam}.retorno deve ser verdadeiro ou falso (boolean).`, `${cam}.retorno`);
+  }
+  if (l.padrao !== undefined && typeof l.padrao !== 'boolean') {
+    ctx.erro('E_TIPO_CAMPO', `${cam}.padrao deve ser verdadeiro ou falso (boolean).`, `${cam}.padrao`);
   }
   if (l.condicao !== undefined) {
     fase1Condicao(l.condicao, `${cam}.condicao`, versao, ctx);
@@ -465,6 +468,13 @@ function fase2(spec, ctx) {
           `ligacoes[${i}]`
         );
       }
+      if (l.padrao === true) {
+        ctx.erro(
+          'E_PADRAO_FORA_GATEWAY',
+          `Só saída de gateway exclusivo pode ser a padrão (${l.de} é ${tOrig}).`,
+          `ligacoes[${i}].padrao`
+        );
+      }
     }
   });
 
@@ -477,9 +487,12 @@ function fase2(spec, ctx) {
         ctx.erro('E_GATEWAY_SAIDAS', `Gateway exclusivo ${a.id} precisa de pelo menos 2 saídas (tem ${sai.length}).`, cam);
       }
       const ordens = new Set();
+      const padroes = new Set(); // destinos marcados como padrão
       for (const li of sai) {
         const l = ligs[li];
-        if (l.condicao === undefined || l.ordem === undefined) {
+        if (l.padrao === true) padroes.add(l.para);
+        const padraoSemCondicao = l.padrao === true && l.condicao === undefined && l.ordem === undefined;
+        if (!padraoSemCondicao && (l.condicao === undefined || l.ordem === undefined)) {
           ctx.erro('E_GATEWAY_SEM_CONDICAO', `Saída ${l.de} → ${l.para} do gateway exclusivo precisa de condicao e ordem.`, `ligacoes[${li}]`);
         }
         if (l.ordem !== undefined) {
@@ -488,6 +501,13 @@ function fase2(spec, ctx) {
           }
           ordens.add(l.ordem);
         }
+      }
+      if (padroes.size > 1) {
+        ctx.erro(
+          'E_PADRAO_REPETIDO',
+          `O gateway exclusivo ${a.id} tem mais de um destino marcado como padrão (${[...padroes].join(', ')}).`,
+          cam
+        );
       }
     }
     if (a.tipo === 'servico' && a.execucao === 'automatizada') {

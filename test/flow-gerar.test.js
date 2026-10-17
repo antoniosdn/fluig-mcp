@@ -936,3 +936,98 @@ test('origem (d): mesmo número em atividade e em link -> E_GERADOR_ORIGEM', asy
   assert.ok(codigos(r.erros).includes('E_GERADOR_ORIGEM'));
   assert.equal(r.erros.find((e) => e.codigo === 'E_GERADOR_ORIGEM').caminho, 'origem.linkSequences[0]');
 });
+
+/* ------------------------------------------------------------------ */
+/* Passo 4: captura de erro em origem e fluxo padrão                   */
+/* ------------------------------------------------------------------ */
+
+test('origem.capturas: a captura de erro mantém o sequence informado e entra no contador', async () => {
+  const origem = { sequencias: { ini: 2, auto: 3, imed: 5 }, capturas: { auto: 40 }, linkSequences: [6, 7] };
+  const r = await gerar(S3(), '1.8.2', { origem });
+  const raiz = parseXml(r.xml);
+  const captura = porBpmn(raiz, 43)[0];
+  assert.equal(seqDe(captura), 40);
+  assert.equal(textoDe(captura, 'parentSequence'), '3');
+  // fim e o terceiro link vêm acima de 40
+  assert.deepEqual(r.sequencias, { ini: 2, auto: 3, imed: 5, fim: 41 });
+});
+
+test('origem.capturas: repetido, inválido ou fora do formato -> E_GERADOR_ORIGEM', async () => {
+  const casos = [
+    { sequencias: { auto: 3 }, capturas: { auto: 3 } },
+    { capturas: { auto: 0 } },
+    { capturas: { auto: 1.5 } },
+    { capturas: [] },
+    { capturas: { auto: 9 }, linkSequences: [9, null, null] },
+  ];
+  for (const origem of casos) {
+    const r = await gerarXmlProcesso(S3(), { versaoAlvo: '1.8.2', origem });
+    assert.equal(r.ok, false, JSON.stringify(origem));
+    assert.ok(codigos(r.erros).includes('E_GERADOR_ORIGEM'), JSON.stringify(origem));
+  }
+});
+
+test('origem.capturas: id inexistente ou serviço não automatizado é ignorado com aviso', async () => {
+  const r = await gerar(S3(), '1.8.2', { origem: { capturas: { fantasma: 7, imed: 8 } } });
+  const av = r.avisos.filter((a) => a.codigo === 'W_GERADOR_ORIGEM_ID');
+  assert.deepEqual(av.map((a) => a.caminho), ['origem.capturas.fantasma', 'origem.capturas.imed']);
+  assert.equal(porBpmn(parseXml(r.xml), 43).length, 1);
+});
+
+/** Gateway com saída padrão sem condição. */
+const SPadrao = () => ({
+  processId: 'proc_padrao',
+  descricao: 'Processo com saída padrão',
+  formId: 50,
+  atividades: [
+    ini,
+    { id: 'gw', tipo: 'gateway_exclusivo', nome: 'Valor alto?' },
+    { id: 'alt', tipo: 'fim', nome: 'Alto' },
+    { id: 'pad', tipo: 'fim', nome: 'Normal' },
+  ],
+  ligacoes: [
+    { de: 'ini', para: 'gw' },
+    { de: 'gw', para: 'alt', ordem: 1, condicao: { regras: [{ campo: 'valor', op: 'maior', valor: '100' }] } },
+    { de: 'gw', para: 'pad', padrao: true },
+  ],
+});
+
+test('padrao: defaultLink=true no ProcessLink e nenhuma ConditionProcessState para a saída padrão', async () => {
+  for (const versao of VERSOES) {
+    const r = await gerar(SPadrao(), versao);
+    assert.equal(r.ok, true, JSON.stringify(r.erros));
+    const raiz = parseXml(r.xml);
+    const links = bloco(raiz, 'ProcessLink').filhos;
+    assert.deepEqual(links.map((l) => textoDe(l, 'defaultLink')), ['false', 'false', 'true']);
+    const conds = bloco(raiz, 'ConditionProcessState').filhos;
+    assert.equal(conds.length, 1);
+    assert.equal(textoDe(conds[0], 'destinationSequenceId'), String(r.sequencias.alt));
+  }
+});
+
+test('padrao: ida e volta pela leitura devolve a mesma spec', async () => {
+  const spec = SPadrao();
+  const r = await gerar(spec, '1.8.2');
+  const lido = lerXmlProcesso(r.xml);
+  assert.deepEqual(lido.spec.ligacoes.map((l) => l.padrao === true), [false, false, true]);
+  assert.equal(lido.spec.ligacoes[2].condicao, undefined);
+  assert.equal(lido.spec.ligacoes[2].ordem, undefined);
+  assert.deepEqual(lido.avisos.filter((a) => a.codigo === 'W_LEITOR_GATEWAY_SEM_CONDICAO'), []);
+});
+
+test('padrao: grupo OU com uma ligação padrão marca o ProcessLink como padrão', async () => {
+  const spec = SPadrao();
+  spec.ligacoes.push({ de: 'gw', para: 'alt', ordem: 2, padrao: true, condicao: { js: 'true' } });
+  const r = await gerarXmlProcesso(spec, { versaoAlvo: '1.8.2' });
+  assert.equal(r.ok, false); // dois destinos padrão
+  assert.ok(codigos(r.erros).includes('E_PADRAO_REPETIDO'));
+  const spec2 = SPadrao();
+  spec2.ligacoes[1].padrao = false;
+  spec2.ligacoes.push({ de: 'gw', para: 'pad', ordem: 2, condicao: { js: 'true' }, padrao: true });
+  const r2 = await gerar(spec2, '1.8.2');
+  assert.equal(r2.ok, true, JSON.stringify(r2.erros));
+  const links = bloco(parseXml(r2.xml), 'ProcessLink').filhos;
+  assert.equal(links.length, 3);
+  assert.equal(textoDe(links[2], 'defaultLink'), 'true');
+  assert.equal(bloco(parseXml(r2.xml), 'ConditionProcessState').filhos.length, 2);
+});
