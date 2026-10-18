@@ -12,7 +12,9 @@ import { gerarXmlProcesso } from './gerar.js';
 import { lerXmlProcesso } from './ler.js';
 import { gerarArtefatos, AVISOS_DO_PLANO_B_REDUNDANTES } from './artefatos.js';
 import { regenerar } from './regenerar.js';
-import { lerDefinicao } from './definicao.js';
+import { readFile } from 'node:fs/promises';
+import { lerDefinicao, aplicarDefinicao } from './definicao.js';
+import { carregarFluiggers } from './fluiggers.js';
 
 const msg = (e) => (e && e.message ? e.message : String(e));
 
@@ -275,11 +277,28 @@ function recusaCategoria(noServidor, noEcm30, { conversor, avisos, dica }) {
 
 /** Dica do E_CATEGORIA_TROCADA conforme o conversor que gerou o ECM30 e o caminho (spec ou processo). */
 function dicaCategoria(info, caminho, categoria) {
+  if (caminho === 'processo') return `Ajuste a categoria no .process (VS Code) para "${categoria}" e regenere.`;
   if (!info || info.tipo !== 'oficial') {
     return 'O gerador próprio (plano B) não leva a categoria; use conversor "oficial" com o Studio instalado.';
   }
-  if (caminho === 'processo') return `Ajuste a categoria no .process (VS Code) para "${categoria}" e regenere.`;
   return 'O ECM30 do conversor oficial saiu sem a categoria herdada; confira o .process gerado (category) e relate.';
+}
+
+/** Monta o `def` de aplicarDefinicao: descrição, volume e expediente vazios não são enviados (ficam como o ECM30 trouxe). */
+function definicaoParaAplicar(def) {
+  const saida = { ...def };
+  if (def.descricao === '') delete saida.descricao;
+  if (!saida.volume) delete saida.volume;
+  if (!saida.expediente) delete saida.expediente;
+  return saida;
+}
+
+/** Definição geral gravada no <bpmn2:BpmnProcess> do .process (name, category, volume, expedient, instruction). */
+async function definicaoDoProcess(caminho) {
+  const p = carregarFluiggers().parseProcess(await readFile(caminho, 'utf8'));
+  const a = (p && p.process && p.process.attributes) || {};
+  const t = (v) => (typeof v === 'string' ? v : '');
+  return { descricao: t(a.name), categoria: t(a.category), volume: t(a.volume), expediente: t(a.expedient), instrucao: t(a.instruction) };
 }
 
 /** Publica uma versão do processo. As travas (prod, confirm, novo, spec/processo) não tocam o cliente. */
@@ -333,8 +352,13 @@ export async function flowDeploy(client, args, internos = {}) {
     const r = await gerarArtefatos(spec, { versaoAlvo: args.versaoAlvo, conversor, lookups: criarLookups(client), geral, cache: args.cache, ...ganchos(internos) });
     if (!r.ok) return { publicado: false, motivo: 'spec com erro', erros: r.erros, avisos: r.avisos };
     avisos = r.avisos || [];
+    let ecm30Spec = r.ecm30.conteudo;
     if (geral) {
-      const trocada = recusaCategoria(geral.categoria, lerDefinicao(r.ecm30.conteudo).categoria, {
+      // a definição do servidor vale qualquer que seja o conversor que gerou o ECM30
+      ecm30Spec = aplicarDefinicao(ecm30Spec, definicaoParaAplicar({ ...geral, descricao: spec.descricao || geral.descricao || spec.processId }), {
+        versaoAlvo: args.versaoAlvo,
+      });
+      const trocada = recusaCategoria(geral.categoria, lerDefinicao(ecm30Spec).categoria, {
         conversor: r.conversor,
         avisos,
         dica: dicaCategoria(r.conversor, 'spec', geral.categoria),
@@ -342,14 +366,14 @@ export async function flowDeploy(client, args, internos = {}) {
       if (trocada) return trocada;
       avisos.push({
         codigo: 'W_DEFINICAO_HERDADA',
-        mensagem: `Categoria "${geral.categoria}", volume, expediente e instrução herdados do processo no servidor${spec.descricao ? '' : '; descrição também'}.`,
+        mensagem: `Categoria "${geral.categoria}", volume, expediente e instrução herdados do processo no servidor${spec.descricao ? '' : '; descrição também'}${args.versaoAlvo === '2.0' && (geral.processCategoryId || geral.icon) ? '; categoria 2.0 e ícone também' : ''}.`,
         caminho: 'processo',
       });
     }
     if (avisos.some((a) => BLOQUEIAM.includes(a.codigo))) {
       return { publicado: false, motivo: 'papel ou campo não conferido no servidor', avisos };
     }
-    ecm30 = r.ecm30.conteudo;
+    ecm30 = ecm30Spec;
     svg = r.svg.conteudo;
     processId = spec.processId;
     info = r.conversor;
@@ -369,6 +393,11 @@ export async function flowDeploy(client, args, internos = {}) {
       } catch (e) {
         return { publicado: false, motivo: 'categoria do processo no servidor não conferida', erro: msg(e) };
       }
+      // o .process é a fonte de categoria, volume, expediente, instrução e descrição; categoria 2.0 e ícone vêm do servidor
+      const doProcess = await definicaoDoProcess(r.processo);
+      ecm30 = aplicarDefinicao(ecm30, definicaoParaAplicar({ ...doProcess, processCategoryId: doServidor.processCategoryId, icon: doServidor.icon }), {
+        versaoAlvo: args.versaoAlvo,
+      });
       const trocada = recusaCategoria(doServidor.categoria, lerDefinicao(ecm30).categoria, {
         conversor: info,
         avisos,

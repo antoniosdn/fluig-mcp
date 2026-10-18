@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gerarArtefatos } from '../src/flow/artefatos.js';
-import { lerDefinicao } from '../src/flow/definicao.js';
+import { lerDefinicao, aplicarDefinicao } from '../src/flow/definicao.js';
 import { instalarConversor } from '../src/flow/conversor.js';
 import { pastaPlugins, tabelaFalsa } from './_conversor-falso.js';
 import {
@@ -325,7 +325,9 @@ test('flowDeploy: sucesso com spec publica o ECM30 e o SVG do gerarArtefatos', a
   assert.equal(quantas(c, 'deployProcess'), 1);
   const d = c.chamadas.find((x) => x.fn === 'deployProcess');
   const gerado = await gerarArtefatos(SPEC(), { versaoAlvo: '2.0', conversor: 'proprio', cache: CACHE_VAZIO, geral: lerDefinicao(XML_SERVIDOR_SEM_CATEGORIA) });
-  assert.equal(d.xml, gerado.ecm30.conteudo);
+  // a definição do servidor é aplicada ao ECM30 gerado (descrição da spec, instrução do servidor)
+  assert.equal(d.xml, aplicarDefinicao(gerado.ecm30.conteudo, { ...lerDefinicao(XML_SERVIDOR_SEM_CATEGORIA), descricao: 'Processo de teste' }, { versaoAlvo: '2.0' }));
+  assert.equal(lerDefinicao(d.xml).instrucao, 'Instrução do servidor');
   assert.match(d.opcoes.svgXml, /^\s*(<\?xml[^>]*\?>\s*)?<svg/);
   assert.equal(d.opcoes.svgXml, gerado.svg.conteudo);
   assert.equal(d.opcoes.processId, 'proc_teste');
@@ -421,16 +423,51 @@ test('flowDeploy: novo=true não consulta a definição no servidor', async () =
   assert.ok(!codigos(r.avisos).includes('W_DEFINICAO_HERDADA'));
 });
 
-test('flowDeploy: spec com novo=false e plano B recusa quando o servidor tem categoria', async () => {
-  const c = clienteFalso({ xmlExport: XML_SERVIDOR });
-  const r = await flowDeploy(c, ENTRADA({ novo: false }));
-  assert.equal(r.publicado, false, JSON.stringify(r));
-  assert.equal(r.categoriaServidor, 'Compras');
-  assert.equal(r.categoriaGerada, '');
-  assert.ok(codigos(r.erros).includes('E_CATEGORIA_TROCADA'));
-  assert.match(r.erros[0].mensagem, /de "Compras" para ""/);
-  assert.match(r.erros[0].mensagem, /plano B/);
-  assert.equal(quantas(c, 'deployProcess'), 0);
+const XML_SERVIDOR_COMPLETO = (extra = '') =>
+  '<list><ProcessDefinition><processDefinitionPK><companyId>1</companyId><processId>proc_teste</processId></processDefinitionPK>' +
+  '<processDescription>Descrição do servidor</processDescription><instruction>Instrução do servidor</instruction>' +
+  '<volumeId>Vol Compras</volumeId><categoryId>Compras</categoryId><periodId>Exp Compras</periodId>' +
+  extra +
+  '</ProcessDefinition></list>';
+const EXTRA_2_0 = '<processCategoryId>00000000-0000-0000-0000-000000000001</processCategoryId><icon>fluigicon-process</icon>';
+
+for (const versaoAlvo of ['1.8.2', '2.0']) {
+  test(`flowDeploy: spec com novo=false e plano B, servidor com categoria, volume e período próprios publica com eles (${versaoAlvo})`, async () => {
+    const c = clienteFalso({ xmlExport: XML_SERVIDOR_COMPLETO() });
+    const r = await flowDeploy(c, ENTRADA({ novo: false, versaoAlvo }));
+    assert.equal(r.publicado, true, JSON.stringify(r));
+    assert.equal(quantas(c, 'deployProcess'), 1);
+    const d = c.chamadas.find((x) => x.fn === 'deployProcess');
+    assert.match(d.xml, /<categoryId>Compras<\/categoryId>/);
+    assert.match(d.xml, /<volumeId>Vol Compras<\/volumeId>/);
+    assert.match(d.xml, /<periodId>Exp Compras<\/periodId>/);
+    assert.match(d.xml, /<instruction>Instrução do servidor<\/instruction>/);
+  });
+
+  test(`flowDeploy: spec com novo=false, ECM30 enviado ${versaoAlvo === '2.0' ? 'leva' : 'não leva'} processCategoryId e icon do servidor (${versaoAlvo})`, async () => {
+    const c = clienteFalso({ xmlExport: XML_SERVIDOR_COMPLETO(EXTRA_2_0), versao: '2.0.0' });
+    const r = await flowDeploy(c, ENTRADA({ novo: false, versaoAlvo }));
+    assert.equal(r.publicado, true, JSON.stringify(r));
+    const d = c.chamadas.find((x) => x.fn === 'deployProcess');
+    if (versaoAlvo === '2.0') {
+      assert.match(d.xml, /<processCategoryId>00000000-0000-0000-0000-000000000001<\/processCategoryId>/);
+      assert.match(d.xml, /<icon>fluigicon-process<\/icon>/);
+      assert.ok(r.avisos.some((a) => a.codigo === 'W_DEFINICAO_HERDADA' && /ícone/.test(a.mensagem)));
+    } else {
+      assert.doesNotMatch(d.xml, /processCategoryId/);
+      assert.doesNotMatch(d.xml, /<icon>/);
+    }
+  });
+}
+
+test('flowDeploy: novo=true envia o ECM30 gerado sem aplicar a definição', async () => {
+  const c = clienteFalso({ xmlExport: XML_SERVIDOR_COMPLETO(EXTRA_2_0) });
+  const r = await flowDeploy(c, ENTRADA({ novo: true }));
+  assert.equal(r.publicado, true, JSON.stringify(r));
+  const d = c.chamadas.find((x) => x.fn === 'deployProcess');
+  const gerado = await gerarArtefatos(SPEC(), { versaoAlvo: '2.0', conversor: 'proprio', cache: CACHE_VAZIO });
+  assert.equal(d.xml, gerado.ecm30.conteudo);
+  assert.equal(quantas(c, 'exportProcessXml'), 0);
 });
 
 test('flowDeploy: spec com novo=false e servidor sem categoria publica', async () => {
@@ -465,7 +502,7 @@ test('flowDeploy: processo com categoria diferente da do servidor recusa', async
     const r = await flowDeploy(c, ENTRADA({ spec: undefined, processo: g.process.caminho, novo: false }));
     assert.equal(r.publicado, false, JSON.stringify(r));
     assert.ok(codigos(r.erros).includes('E_CATEGORIA_TROCADA'));
-    assert.match(r.erros[0].mensagem, /plano B/);
+    assert.match(r.erros[0].mensagem, /Ajuste a categoria no \.process/);
     assert.equal(quantas(c, 'deployProcess'), 0);
   } finally {
     rmSync(projeto, { recursive: true, force: true });
@@ -600,15 +637,58 @@ test('flowDeploy: liberação recusada pelo servidor vira resultado, sem lançar
   await assert.rejects(() => flowDeploy(c2, ENTRADA()), /importProcess falhou/);
 });
 
-test('flowDeploy: processo com mesma categoria do servidor e conversor próprio recusa com a dica do plano B', async () => {
-  const { projeto, g } = await processoGerado(SPEC(), lerDefinicao(XML_SERVIDOR));
+for (const versaoAlvo of ['1.8.2', '2.0']) {
+  test(`flowDeploy: processo com mesma categoria do servidor e plano B publica com a categoria no ECM30 (${versaoAlvo})`, async () => {
+    const projeto = mkdtempSync(join(tmpdir(), 'proj-deploy-'));
+    try {
+      const g = await gerarArtefatos(SPEC(), { versaoAlvo, projeto, conversor: 'proprio', cache: CACHE_VAZIO, geral: lerDefinicao(XML_SERVIDOR) });
+      assert.match(readFileSync(g.process.caminho, 'utf8'), /category="Compras"/);
+      const c = clienteFalso({ xmlExport: XML_SERVIDOR_COMPLETO(EXTRA_2_0) });
+      const r = await flowDeploy(c, ENTRADA({ spec: undefined, processo: g.process.caminho, novo: false, conversor: 'proprio', versaoAlvo }));
+      assert.equal(r.publicado, true, JSON.stringify(r));
+      const d = c.chamadas.find((x) => x.fn === 'deployProcess');
+      assert.match(d.xml, /<categoryId>Compras<\/categoryId>/);
+      if (versaoAlvo === '2.0') {
+        assert.match(d.xml, /<processCategoryId>00000000-0000-0000-0000-000000000001<\/processCategoryId>/);
+        assert.match(d.xml, /<icon>fluigicon-process<\/icon>/);
+      } else {
+        assert.doesNotMatch(d.xml, /processCategoryId/);
+        assert.doesNotMatch(d.xml, /<icon>/);
+      }
+    } finally {
+      rmSync(projeto, { recursive: true, force: true });
+    }
+  });
+}
+
+test('flowDeploy: processo com outra categoria no .process que a do servidor recusa (E_CATEGORIA_TROCADA)', async () => {
+  const { projeto, g } = await processoGerado(SPEC(), { ...lerDefinicao(XML_SERVIDOR), categoria: 'Outra' });
   try {
     const c = clienteFalso({ xmlExport: XML_SERVIDOR });
     const r = await flowDeploy(c, ENTRADA({ spec: undefined, processo: g.process.caminho, novo: false, conversor: 'proprio' }));
     assert.equal(r.publicado, false, JSON.stringify(r));
     assert.ok(codigos(r.erros).includes('E_CATEGORIA_TROCADA'));
-    assert.match(r.erros[0].mensagem, /plano B/);
-    assert.doesNotMatch(r.erros[0].mensagem, /Ajuste a categoria no \.process/);
+    assert.match(r.erros[0].mensagem, /de "Compras" para "Outra"/);
+    assert.match(r.erros[0].mensagem, /Ajuste a categoria no \.process/);
+    assert.equal(quantas(c, 'deployProcess'), 0);
+  } finally {
+    rmSync(projeto, { recursive: true, force: true });
+  }
+});
+
+test('flowDeploy: processo sem name no BpmnProcess mantém a descrição do ECM30 gerado', async () => {
+  const { projeto, g } = await processoGerado(SPEC());
+  try {
+    const caminho = g.process.caminho;
+    const texto = readFileSync(caminho, 'utf8');
+    const sem = texto.replace(/(<bpmn2:BpmnProcess\b[^>]*?)\sname="[^"]*"/, '$1');
+    assert.notEqual(sem, texto);
+    writeFileSync(caminho, sem);
+    const c = clienteFalso({ xmlExport: XML_SERVIDOR_SEM_CATEGORIA });
+    const r = await flowDeploy(c, ENTRADA({ spec: undefined, processo: caminho, novo: false, conversor: 'proprio' }));
+    assert.equal(r.publicado, true, JSON.stringify(r));
+    const d = c.chamadas.find((x) => x.fn === 'deployProcess');
+    assert.notEqual(lerDefinicao(d.xml).descricao, '');
   } finally {
     rmSync(projeto, { recursive: true, force: true });
   }
