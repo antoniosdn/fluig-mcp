@@ -35,8 +35,11 @@ cada uma na marra.
 
 Requer **Node.js 20+**.
 
+Este repositório é um fork de [alucardigo/fluig-mcp](https://github.com/alucardigo/fluig-mcp). O
+gerador de fluxo (`fluig_flow_*`) e o log (`fluig_log_search`) existem só aqui: para usá-los, clone o fork.
+
 ```bash
-git clone https://github.com/alucardigo/fluig-mcp.git
+git clone https://github.com/antoniosdn/fluig-mcp.git
 cd fluig-mcp
 npm install
 ```
