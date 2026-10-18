@@ -246,3 +246,42 @@ test('oráculo offline com o plano B: .process → ECM30 próprio → spec igual
     }
   }
 });
+
+test('specParaProcess com geral: categoria e instrução no BpmnProcess (volume e expediente Default); sem erro no validateProcess', () => {
+  const spec = fixture('spec-completa');
+  const r = specParaProcess(spec, { versaoAlvo: '2.0', geral: { categoria: 'Compras', instrucao: 'Instrução X' } });
+  const F = carregarFluiggers();
+  assert.deepEqual(F.validateProcess(F.parseProcess(r.texto)).errors, []);
+  const bp = /<bpmn2:BpmnProcess\b[\s\S]*?>\s*</.exec(r.texto)[0];
+  assert.match(bp, /category="Compras"/);
+  assert.match(bp, /volume="Default"/);
+  assert.match(bp, /expedient="Default"/);
+  assert.match(bp, /instruction="Instru/);
+});
+
+test('specParaProcess com geral: sem descricao na spec, name = geral.descricao; com descricao, a da spec', () => {
+  const spec = fixture('spec-completa');
+  const geral = { descricao: 'Descrição do servidor', categoria: 'Compras' };
+  delete spec.descricao;
+  const r = specParaProcess(spec, { versaoAlvo: '2.0', geral });
+  assert.match(/<bpmn2:BpmnProcess\b[\s\S]*?>\s*</.exec(r.texto)[0], /name="Descri[^"]*do servidor"/);
+  const spec2 = fixture('spec-completa');
+  const r2 = specParaProcess(spec2, { versaoAlvo: '2.0', geral });
+  assert.ok(r2.texto.includes('Fluxo de exemplo do gerador'));
+});
+
+test('specParaProcess sem geral: texto idêntico ao de antes (opção geral undefined)', () => {
+  const spec = fixture('spec-completa');
+  assert.equal(specParaProcess(spec, { versaoAlvo: '2.0' }).texto, specParaProcess(spec, { versaoAlvo: '2.0', geral: undefined }).texto);
+  assert.match(/<bpmn2:BpmnProcess\b[\s\S]*?>\s*</.exec(specParaProcess(spec, { versaoAlvo: '2.0' }).texto)[0], /category=""/);
+});
+
+test('specParaProcess com geral: volume e expediente customizados do servidor são gravados e validam', () => {
+  const spec = fixture('spec-completa');
+  const r = specParaProcess(spec, { versaoAlvo: '2.0', geral: { categoria: 'Compras', volume: 'VolRH', expediente: 'Exp8h' } });
+  const F = carregarFluiggers();
+  assert.deepEqual(F.validateProcess(F.parseProcess(r.texto)).errors, []);
+  const bp = /<bpmn2:BpmnProcess\b[\s\S]*?>\s*</.exec(r.texto)[0];
+  assert.match(bp, /volume="VolRH"/);
+  assert.match(bp, /expedient="Exp8h"/);
+});

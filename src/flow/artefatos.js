@@ -37,12 +37,12 @@ async function lerSeExiste(caminho) {
 /**
  * @param {object} spec spec v1
  * @param {{versaoAlvo: '1.8.2'|'2.0', projeto?: string, sobrescrever?: boolean,
- *          conversor?: 'auto'|'oficial'|'proprio', lookups?: object, cache?: string, java?: string,
+ *          conversor?: 'auto'|'oficial'|'proprio', lookups?: object, geral?: object, cache?: string, java?: string,
  *          executar?: Function, agora?: Function}} opcoes
  * @returns {Promise<{ok: boolean, erros?: Array, avisos: Array, ids?: object, process?: object, ecm30?: object, svg?: object, conversor?: object}>}
  */
 export async function gerarArtefatos(spec, opcoes = {}) {
-  const { versaoAlvo, projeto, sobrescrever = false, conversor = 'auto', lookups, cache, java, executar, agora = () => new Date() } = opcoes;
+  const { versaoAlvo, projeto, sobrescrever = false, conversor = 'auto', lookups, geral, cache, java, executar, agora = () => new Date() } = opcoes;
   if (!VERSOES_ALVO.includes(versaoAlvo)) {
     throw new ErroFluxo('E_VERSAO', `versaoAlvo "${versaoAlvo}" inválida; use 1.8.2 ou 2.0.`);
   }
@@ -72,7 +72,7 @@ export async function gerarArtefatos(spec, opcoes = {}) {
   }
 
   // monta o .process antes de tocar o disco (P1 e P2 dentro de specParaProcess)
-  const sp = specParaProcess(spec, { versaoAlvo });
+  const sp = specParaProcess(spec, { versaoAlvo, geral });
   avisos.push(...sp.avisos);
   const processBuf = Buffer.from(sp.texto, 'utf8');
 
@@ -107,6 +107,27 @@ export async function gerarArtefatos(spec, opcoes = {}) {
       proc.alterado = true;
     }
 
+    // o Fluig não libera serviço sem script: cria o script vazio se ainda não existe (nunca toca o existente)
+    const scripts = [];
+    const dirScripts = join(base, 'workflow', 'scripts');
+    for (let i = 0; i < spec.atividades.length; i++) {
+      const a = spec.atividades[i];
+      if (a.tipo !== 'servico') continue;
+      const el = sp.ids[a.id];
+      const arquivo = join(dirScripts, `${spec.processId}.${el}.js`);
+      const existe = (await lerSeExiste(arquivo)) !== null;
+      if (!existe) {
+        await mkdir(dirScripts, { recursive: true });
+        await gravarAtomico(arquivo, Buffer.from(`function ${el}() {\n}\n`, 'utf8'));
+        avisos.push({
+          codigo: 'W_SCRIPT_SERVICO_VAZIO',
+          mensagem: `Serviço ${a.id}: criado script vazio ${spec.processId}.${el}.js para o Fluig liberar a versão; escreva a integração nele (ou no editor) antes de usar.`,
+          caminho: `atividades[${i}]`,
+        });
+      }
+      scripts.push({ atividade: a.id, arquivo: temporario ? null : arquivo, criado: !existe });
+    }
+
     let r;
     try {
       r = await regenerar(caminhoProcess, {
@@ -134,6 +155,7 @@ export async function gerarArtefatos(spec, opcoes = {}) {
       ok: true,
       avisos,
       ids: sp.ids,
+      scripts,
       process: proc,
       ecm30: { caminho: temporario ? null : r.ecm30.caminho, conteudo: r.ecm30.conteudo, bytes: r.ecm30.bytes, alterado: r.ecm30.alterado, backup: r.ecm30.backup },
       svg: { caminho: temporario ? null : r.svg.caminho, conteudo: r.svg.conteudo, bytes: r.svg.bytes, alterado: r.svg.alterado },

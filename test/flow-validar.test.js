@@ -225,7 +225,7 @@ test('W_SERVICO_AUTOMATIZADO só em automatizada', async () => {
   assert.equal(temProblema(await v(mk('imediata')), 'W_SERVICO_AUTOMATIZADO'), false);
   const r = await v(mk('automatizada'));
   assert.equal(temProblema(r, 'W_SERVICO_AUTOMATIZADO', 'atividades[1]'), true);
-  assert.match(r.avisos.find((a) => a.codigo === 'W_SERVICO_AUTOMATIZADO').mensagem, /ligada a apr; o script do serviço é feito depois no editor/);
+  assert.match(r.avisos.find((a) => a.codigo === 'W_SERVICO_AUTOMATIZADO').mensagem, /ligada a apr; o gerador cria um script vazio do serviço, que você completa depois/);
   assert.equal(r.ok, true);
 });
 
@@ -589,4 +589,19 @@ test('E_LIGACAO_DUPLICADA: duas ligações iguais escritas na spec continuam sen
   const rd = await v(dup);
   assert.equal(rd.ok, false);
   assert.equal(temProblema(rd, 'E_LIGACAO_DUPLICADA'), true, JSON.stringify(rd.erros));
+});
+
+function comRet(ret) {
+  const s = specParalelo();
+  if (ret !== undefined) s.ligacoes.find((l) => l.de === 'a' && l.para === 'jn').retorno = ret;
+  return s;
+}
+test('E_RETORNO_JUNCAO: ligação com retorno para junção paralela é recusada', async () => {
+  const r = await validarSpec(comRet(true), { versaoAlvo: '2.0' });
+  assert.equal(temProblema(r, 'E_RETORNO_JUNCAO', 'ligacoes[3].retorno'), true);
+  assert.match(r.erros.find((e) => e.codigo === 'E_RETORNO_JUNCAO').mensagem, /Ligação a → jn: o Fluig não libera junção paralela/);
+  for (const ret of [undefined, false]) {
+    const ok = await validarSpec(comRet(ret), { versaoAlvo: '2.0' });
+    assert.equal(temProblema(ok, 'E_RETORNO_JUNCAO'), false);
+  }
 });

@@ -78,3 +78,19 @@ for (const versaoAlvo of ['1.8.2', '2.0']) {
     });
   }
 }
+
+// definição herdada do servidor: a categoria do .process tem de chegar ao ECM30 oficial como <categoryId>
+for (const versaoAlvo of ['1.8.2', '2.0']) {
+  test(`oficial ${versaoAlvo}: geral.categoria vira categoryId no ECM30`, { skip: motivo(versaoAlvo) }, async () => {
+    const projeto = mkdtempSync(join(tmpdir(), 'spec-process-oficial-'));
+    try {
+      const spec = fixture('spec-completa');
+      const r = await gerarArtefatos(spec, { versaoAlvo, projeto, conversor: 'oficial', cache, geral: { categoria: 'Compras' } });
+      assert.equal(r.ok, true, JSON.stringify(r.erros));
+      assert.equal(r.conversor.tipo, 'oficial');
+      assert.match(r.ecm30.conteudo, /<categoryId>Compras<\/categoryId>/);
+    } finally {
+      rmSync(projeto, { recursive: true, force: true });
+    }
+  });
+}

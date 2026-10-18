@@ -206,3 +206,90 @@ test('erro do conversor depois de gravar o .process: o .process fica e a mensage
     rmSync(cache, { recursive: true, force: true });
   }
 });
+
+test('serviço: script vazio criado para o conversor oficial (temporário) e evento no ECM30 do plano B', async () => {
+  const cache = tmp();
+  const fonte = tmp();
+  try {
+    const t = tabelaFalsa();
+    const tabela = { '1.8.2.0': t['9.9.9.9'], '2.0.0.2': t['8.8.8.8'] };
+    pastaPlugins(fonte);
+    await instalarConversor({ de: fonte, cache, tabela });
+    const ECM30 = '<list>\n  <ProcessDefinition>\n  </ProcessDefinition>\n  <ProcessDefinitionVersion>\n  </ProcessDefinitionVersion>\n</list>\n';
+    const vistos = [];
+    const executar = async (arquivo, args) => {
+      if (args[0] === '-version') return { stdout: '', stderr: 'openjdk version "21"' };
+      const proc = args.find((a) => a.endsWith('.process'));
+      const dirScripts = join(proc, '..', '..', 'scripts');
+      for (const f of existsSync(dirScripts) ? readdirSync(dirScripts) : []) vistos.push([f, readFileSync(join(dirScripts, f), 'utf8')]);
+      writeFileSync(args[args.indexOf('Ecm30Bridge') + 2], ECM30);
+      return { stdout: '', stderr: '' };
+    };
+    const r = await gerarArtefatos(fixture('spec-completa'), {
+      versaoAlvo: '1.8.2', conversor: 'oficial', cache, executar, java: '/falso/bin/java', _tabela: tabela,
+    });
+    assert.equal(r.ok, true, JSON.stringify(r.erros));
+    assert.equal(r.scripts.length, 2);
+    assert.ok(r.scripts.every((s) => s.arquivo === null && s.criado === true));
+    const el = r.ids.erp;
+    assert.match(el, /^servicetask\d+$/);
+    assert.deepEqual(vistos.find(([f]) => f === `gerador_oraculo.${el}.js`), [`gerador_oraculo.${el}.js`, `function ${el}() {\n}\n`]);
+    const av = r.avisos.filter((a) => a.codigo === 'W_SCRIPT_SERVICO_VAZIO');
+    assert.equal(av.length, 2);
+    assert.match(av[0].mensagem, /^Serviço erp: criado script vazio gerador_oraculo\.servicetask\d+\.js/);
+    assert.equal(fluigFlowNoTmp().length, 0);
+  } finally {
+    for (const d of [cache, fonte]) rmSync(d, { recursive: true, force: true });
+  }
+});
+
+test('serviço: plano B leva o evento servicetask<N> ao ECM30; script existente é preservado', async () => {
+  const projeto = tmp();
+  const cache = tmp();
+  try {
+    const spec = fixture('spec-completa');
+    const r = await gerarArtefatos(spec, { versaoAlvo: '2.0', projeto, conversor: 'proprio', cache });
+    assert.equal(r.ok, true, JSON.stringify(r.erros));
+    const el = r.ids.erp;
+    assert.match(r.ecm30.conteudo, new RegExp(`<eventId>${el}</eventId>`));
+    const arq = join(projeto, 'workflow', 'scripts', `gerador_oraculo.${el}.js`);
+    assert.equal(readFileSync(arq, 'utf8'), `function ${el}() {\n}\n`);
+    assert.equal(r.scripts.find((s) => s.atividade === 'erp').arquivo, arq);
+
+    writeFileSync(arq, `function ${el}() {\n  // meu código\n}\n`);
+    const r2 = await gerarArtefatos(spec, { versaoAlvo: '2.0', projeto, conversor: 'proprio', cache });
+    assert.equal(readFileSync(arq, 'utf8'), `function ${el}() {\n  // meu código\n}\n`);
+    assert.equal(r2.scripts.find((s) => s.atividade === 'erp').criado, false);
+    assert.ok(!r2.avisos.some((a) => a.codigo === 'W_SCRIPT_SERVICO_VAZIO' && /Serviço erp/.test(a.mensagem)));
+    assert.equal(r2.scripts.find((s) => s.atividade === 'avisa').criado, false);
+  } finally {
+    rmSync(projeto, { recursive: true, force: true });
+    rmSync(cache, { recursive: true, force: true });
+  }
+});
+
+test('serviço: spec sem serviço não cria script', async () => {
+  const projeto = tmp();
+  const cache = tmp();
+  try {
+    const spec = {
+      processId: 'sem_servico',
+      atividades: [
+        { id: 'ini', tipo: 'inicio', nome: 'Início' },
+        { id: 'hum', tipo: 'humana', nome: 'Preencher', responsavel: { tipo: 'pool_papel', valor: 'solicitante' } },
+        { id: 'fim', tipo: 'fim', nome: 'Fim' },
+      ],
+      ligacoes: [
+        { de: 'ini', para: 'hum' },
+        { de: 'hum', para: 'fim' },
+      ],
+    };
+    const r = await gerarArtefatos(spec, { versaoAlvo: '2.0', projeto, conversor: 'proprio', cache });
+    assert.equal(r.ok, true, JSON.stringify(r.erros));
+    assert.deepEqual(r.scripts, []);
+    assert.ok(!existsSync(join(projeto, 'workflow', 'scripts')));
+  } finally {
+    rmSync(projeto, { recursive: true, force: true });
+    rmSync(cache, { recursive: true, force: true });
+  }
+});

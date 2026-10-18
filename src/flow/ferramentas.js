@@ -12,6 +12,7 @@ import { gerarXmlProcesso } from './gerar.js';
 import { lerXmlProcesso } from './ler.js';
 import { gerarArtefatos, AVISOS_DO_PLANO_B_REDUNDANTES } from './artefatos.js';
 import { regenerar } from './regenerar.js';
+import { lerDefinicao } from './definicao.js';
 
 const msg = (e) => (e && e.message ? e.message : String(e));
 
@@ -45,6 +46,7 @@ export async function versaoServidor(client) {
   const r = await client.restGet('/ecm/api/rest/ecm/studioWorkflowRest/version');
   let v = r;
   if (r && typeof r === 'object' && typeof r.content === 'string') v = r.content;
+  else if (r && typeof r === 'object' && typeof r._raw === 'string' && r._blocked !== true && (r._status === undefined || r._status === 200)) v = r._raw;
   if (typeof v !== 'string' || !/^\d+(\.\d+)*$/.test(v.trim())) {
     const bruto = typeof v === 'string' ? v : JSON.stringify(r);
     throw new Error(`versão do servidor ilegível: ${String(bruto).slice(0, 120)}`);
@@ -207,6 +209,7 @@ export async function flowGenerate(client, args, internos = {}) {
   const incluir = args.incluirConteudo !== undefined ? args.incluirConteudo === true : !args.projeto;
   saida.conversor = r.conversor;
   saida.ids = r.ids;
+  saida.scripts = r.scripts;
   saida.process = artefatoSaida(r.process, incluir);
   saida.ecm30 = artefatoSaida(r.ecm30, incluir);
   saida.svg = artefatoSaida(r.svg, incluir);
@@ -255,6 +258,30 @@ function processIdDoEcm30(xml) {
   return m ? m[1] : null;
 }
 
+/** Processo existente com categoria no servidor: o ECM30 gerado tem que mantê-la. Devolve a recusa ou null. */
+function recusaCategoria(noServidor, noEcm30, { conversor, avisos, dica }) {
+  if (noServidor === '' || noEcm30 === noServidor) return null;
+  const mensagem = `Publicar mudaria a categoria de "${noServidor}" para "${noEcm30}"; processo existente mantém a categoria. ${dica}`;
+  return {
+    publicado: false,
+    motivo: 'a publicação trocaria a categoria do processo',
+    categoriaServidor: noServidor,
+    categoriaGerada: noEcm30,
+    conversor,
+    erros: [{ codigo: 'E_CATEGORIA_TROCADA', mensagem }],
+    avisos,
+  };
+}
+
+/** Dica do E_CATEGORIA_TROCADA conforme o conversor que gerou o ECM30 e o caminho (spec ou processo). */
+function dicaCategoria(info, caminho, categoria) {
+  if (!info || info.tipo !== 'oficial') {
+    return 'O gerador próprio (plano B) não leva a categoria; use conversor "oficial" com o Studio instalado.';
+  }
+  if (caminho === 'processo') return `Ajuste a categoria no .process (VS Code) para "${categoria}" e regenere.`;
+  return 'O ECM30 do conversor oficial saiu sem a categoria herdada; confira o .process gerado (category) e relate.';
+}
+
 /** Publica uma versão do processo. As travas (prod, confirm, novo, spec/processo) não tocam o cliente. */
 export async function flowDeploy(client, args, internos = {}) {
   if (args.env === 'prod' || client.isProd) {
@@ -290,9 +317,35 @@ export async function flowDeploy(client, args, internos = {}) {
   let info;
   let avisos;
   if (spec) {
-    const r = await gerarArtefatos(spec, { versaoAlvo: args.versaoAlvo, conversor, lookups: criarLookups(client), cache: args.cache, ...ganchos(internos) });
+    // processo existente: a definição geral (categoria, volume, expediente, instrução) é do servidor
+    let geral;
+    if (!args.novo) {
+      try {
+        geral = lerDefinicao(await client.exportProcessXml(spec.processId));
+      } catch (e) {
+        return {
+          publicado: false,
+          motivo: 'processo não encontrado no servidor para herdar a definição (use novo=true para processo novo)',
+          erro: msg(e),
+        };
+      }
+    }
+    const r = await gerarArtefatos(spec, { versaoAlvo: args.versaoAlvo, conversor, lookups: criarLookups(client), geral, cache: args.cache, ...ganchos(internos) });
     if (!r.ok) return { publicado: false, motivo: 'spec com erro', erros: r.erros, avisos: r.avisos };
     avisos = r.avisos || [];
+    if (geral) {
+      const trocada = recusaCategoria(geral.categoria, lerDefinicao(r.ecm30.conteudo).categoria, {
+        conversor: r.conversor,
+        avisos,
+        dica: dicaCategoria(r.conversor, 'spec', geral.categoria),
+      });
+      if (trocada) return trocada;
+      avisos.push({
+        codigo: 'W_DEFINICAO_HERDADA',
+        mensagem: `Categoria "${geral.categoria}", volume, expediente e instrução herdados do processo no servidor${spec.descricao ? '' : '; descrição também'}.`,
+        caminho: 'processo',
+      });
+    }
     if (avisos.some((a) => BLOQUEIAM.includes(a.codigo))) {
       return { publicado: false, motivo: 'papel ou campo não conferido no servidor', avisos };
     }
@@ -308,6 +361,21 @@ export async function flowDeploy(client, args, internos = {}) {
     info = r.conversor;
     processId = processIdDoEcm30(ecm30);
     if (!processId) throw new Error('Não foi possível ler o processId do ECM30 gerado a partir do .process.');
+    // a definição do processo é comum a todas as versões: processo existente com categoria no servidor a mantém
+    if (!args.novo) {
+      let doServidor;
+      try {
+        doServidor = lerDefinicao(await client.exportProcessXml(processId));
+      } catch (e) {
+        return { publicado: false, motivo: 'categoria do processo no servidor não conferida', erro: msg(e) };
+      }
+      const trocada = recusaCategoria(doServidor.categoria, lerDefinicao(ecm30).categoria, {
+        conversor: info,
+        avisos,
+        dica: dicaCategoria(info, 'processo', doServidor.categoria),
+      });
+      if (trocada) return trocada;
+    }
     // confere papéis e campos no servidor com a spec lida do ECM30 (o que está fora da v1 vira aviso)
     const lida = lerXmlProcesso(ecm30);
     for (const a of lida.avisos) avisos.push({ codigo: a.codigo, mensagem: a.mensagem, caminho: a.ref });
@@ -324,13 +392,50 @@ export async function flowDeploy(client, args, internos = {}) {
     }
   }
 
-  const d = await client.deployProcess(ecm30, {
-    processId,
-    isNew: args.novo,
-    overWrite: true,
-    confirm: true,
-    svgXml: svg,
-  });
+  let d;
+  try {
+    d = await client.deployProcess(ecm30, {
+      processId,
+      isNew: args.novo,
+      overWrite: true,
+      confirm: true,
+      svgXml: svg,
+    });
+  } catch (e) {
+    const texto = msg(e);
+    if (!texto.startsWith('releaseProcess retornou ok=false')) throw e;
+    const retornoServidor = texto.replace(/^releaseProcess retornou ok=false:?\s*/, '');
+    const errosServidor = [];
+    const errosPorTipo = {};
+    for (const m of retornoServidor.matchAll(/(\w+Error)=\[([^\]]*)\]/g)) {
+      for (const item of m[2].split(', ')) {
+        if (item.trim() === '') continue;
+        errosServidor.push(item.trim());
+        (errosPorTipo[m[1]] = errosPorTipo[m[1]] || []).push(item.trim());
+      }
+    }
+    return {
+      publicado: false,
+      motivo: 'liberação recusada pelo servidor',
+      versaoEmEdicao: true,
+      processId,
+      novo: args.novo,
+      versaoAlvo: args.versaoAlvo,
+      versaoServidor: sv,
+      conversor: info,
+      errosServidor,
+      errosPorTipo,
+      retornoServidor,
+      avisos: [
+        ...avisos,
+        {
+          codigo: 'W_VERSAO_EM_EDICAO',
+          mensagem: 'A versão foi importada mas não liberada; corrija e publique de novo (novo=false) ou libere/descarte no editor.',
+          caminho: 'processo',
+        },
+      ],
+    };
+  }
   return {
     publicado: true,
     processId,

@@ -109,12 +109,28 @@ export function conferirConfiguracao(texto) {
   return saida;
 }
 
+/** Catálogos de volume e expediente: o vendor recusa valor fora deles; o do servidor entra como válido. */
+function catalogosGeral(geral) {
+  const c = {};
+  if (geral.volume) c.volumeCatalog = [{ value: geral.volume }];
+  if (geral.expediente) c.expedientCatalog = [{ value: geral.expediente }];
+  return c;
+}
+
+/** Descrição do processo: a da spec, senão a herdada (`geral`), senão o processId. */
+function descricaoEfetiva(spec, geral) {
+  if (spec.descricao !== undefined && spec.descricao !== '') return spec.descricao;
+  if (geral && geral.descricao) return geral.descricao;
+  return spec.processId;
+}
+
 /**
  * @param {object} spec spec v1 já validada
- * @param {{versaoAlvo?: '1.8.2'|'2.0'}} [opcoes]
+ * @param {{versaoAlvo?: '1.8.2'|'2.0', geral?: {descricao?: string, categoria?: string, volume?: string, expediente?: string, instrucao?: string}}} [opcoes]
+ *   geral: definição geral herdada do servidor (categoria, volume, expediente, instrução; descrição só se a spec não tiver)
  * @returns {{texto: string, ids: object, fluxos: string[], posicoes: object, origem: object, avisos: Array}}
  */
-export function specParaProcess(spec, { versaoAlvo } = {}) {
+export function specParaProcess(spec, { versaoAlvo, geral } = {}) {
   void versaoAlvo; // o .process é o mesmo para as duas versões; a versão pesa só na conversão para ECM30
   const F = carregarFluiggers();
   const ed = F.editor;
@@ -135,9 +151,21 @@ export function specParaProcess(spec, { versaoAlvo } = {}) {
 
   let texto = vendor('esqueleto', spec.processId, () =>
     F.buildProcessScaffold(F.templateCriacao, spec.processId, {
-      description: spec.descricao !== undefined && spec.descricao !== '' ? spec.descricao : spec.processId,
+      description: descricaoEfetiva(spec, geral),
     })
   ).text;
+  if (geral) {
+    texto = vendor('definição', spec.processId, () =>
+      ed.patchProcessGeneral(texto, spec.processId, {
+        code: spec.processId,
+        description: descricaoEfetiva(spec, geral),
+        instruction: geral.instrucao || '',
+        category: geral.categoria || '',
+        volume: geral.volume || 'Default',
+        expedient: geral.expediente || 'Default',
+      }, catalogosGeral(geral))
+    ).text;
+  }
   const aplicar = (r) => {
     texto = r.text;
     return r;
@@ -296,7 +324,7 @@ export function specParaProcess(spec, { versaoAlvo } = {}) {
       `A releitura do .process gerado tem avisos:\n- ${lida.avisos.map((a) => `${a.codigo}: ${a.mensagem}`).join('\n- ')}`
     );
   }
-  const difs = compararSpecProcess(spec, lida.spec, { ids, posicoes });
+  const difs = compararSpecProcess(spec, lida.spec, { ids, posicoes, geral });
   if (difs.length > 0) {
     throw new ErroFluxo(
       'E_PROCESS_DIVERGENTE',
@@ -334,13 +362,13 @@ function normCondicao(c) {
  * Os ids da spec lida são `s<seq>`, com `seq` os dígitos finais do elementId.
  * @returns {Array<{campo: string, esperado: any, obtido: any}>} [] = igual
  */
-export function compararSpecProcess(spec, lida, { ids, posicoes }) {
+export function compararSpecProcess(spec, lida, { ids, posicoes, geral }) {
   const difs = [];
   const dif = (campo, esperado, obtido) => difs.push({ campo, esperado, obtido });
   const sid = (id) => `s${digitosFinais(ids[id])}`;
 
   if (spec.processId !== lida.processId) dif('processId', spec.processId, lida.processId);
-  const descEsperada = spec.descricao !== undefined && spec.descricao !== '' ? spec.descricao : spec.processId;
+  const descEsperada = descricaoEfetiva(spec, geral);
   const descObtida = lida.descricao !== undefined ? lida.descricao : lida.processId;
   if (descEsperada !== descObtida) dif('descricao', descEsperada, descObtida);
   if ((spec.formId ?? null) !== (lida.formId ?? null)) dif('formId', spec.formId ?? null, lida.formId ?? null);

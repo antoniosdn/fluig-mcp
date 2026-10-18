@@ -523,6 +523,13 @@ function fase2(spec, ctx) {
   const vistos = new Set();
   ligs.forEach((l, i) => {
     const tOrig = tipo(l.de);
+    if (l.retorno === true && tipo(l.para) === 'gateway_paralelo_juncao') {
+      ctx.erro(
+        'E_RETORNO_JUNCAO',
+        `Ligação ${l.de} → ${l.para}: o Fluig não libera junção paralela com fluxo de entrada que permita retorno; tire o retorno.`,
+        `ligacoes[${i}].retorno`
+      );
+    }
     if (!ehGatewayExcl(tOrig)) {
       const chave = `${l.de}\u0000${l.para}`;
       if (vistos.has(chave)) {
@@ -584,7 +591,7 @@ function fase2(spec, ctx) {
       }
       ctx.aviso(
         'W_SERVICO_AUTOMATIZADO',
-        `Serviço automatizado ${a.id}: o gerador cria a captura de erro ligada a ${a.tratamentoErro}; o script do serviço é feito depois no editor.`,
+        `Serviço automatizado ${a.id}: o gerador cria a captura de erro ligada a ${a.tratamentoErro}; o gerador cria um script vazio do serviço, que você completa depois.`,
         cam
       );
     }
