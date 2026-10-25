@@ -5,6 +5,12 @@ versionamento [SemVer](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
+### Mudado
+
+- Spec é só para processo novo: `fluig_flow_deploy` recusa `spec` com `novo=false` (a spec renumera as
+  atividades) e manda usar `fluig_flow_import`; `fluig_flow_generate` avisa `W_PROCESSO_EXISTENTE`
+  quando o processo já existe no servidor. Sai a herança da definição do servidor no caminho por spec.
+
 ### Adicionado
 
 - `fluig_flow_import` e `fluig-mcp importar`: importam um processo do servidor como o "importar processo"

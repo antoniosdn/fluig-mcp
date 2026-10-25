@@ -203,6 +203,19 @@ export async function flowGenerate(client, args, internos = {}) {
       caminho: 'versaoAlvo',
     });
   }
+  // spec é só para processo novo: um processo que já existe no servidor sairia renumerado
+  try {
+    const existente = spec && spec.processId ? await client.exportProcessXml(spec.processId) : null;
+    if (typeof existente === 'string' && existente.includes('<ProcessDefinition>')) {
+      avisos.push({
+        codigo: 'W_PROCESSO_EXISTENTE',
+        mensagem: `O processo ${spec.processId} já existe no servidor. A spec é só para processo novo: o .process gerado tem as atividades renumeradas e o fluig_flow_deploy recusa spec com novo=false. Para nova versão, use fluig_flow_import.`,
+        caminho: 'processId',
+      });
+    }
+  } catch {
+    /* processo inexistente ou servidor indisponível: nada a avisar */
+  }
   const saida = { ok: r.ok, versaoAlvo: args.versaoAlvo, versaoServidor: sv.versao || null };
   if (!r.ok) {
     saida.erros = r.erros;
@@ -330,15 +343,6 @@ function recusaCategoria(noServidor, noEcm30, { conversor, avisos, dica }) {
   };
 }
 
-/** Dica do E_CATEGORIA_TROCADA conforme o conversor que gerou o ECM30 e o caminho (spec ou processo). */
-function dicaCategoria(info, caminho, categoria) {
-  if (caminho === 'processo') return `Ajuste a categoria no .process (VS Code) para "${categoria}" e regenere.`;
-  if (!info || info.tipo !== 'oficial') {
-    return 'O gerador próprio (plano B) não leva a categoria; use conversor "oficial" com o Studio instalado.';
-  }
-  return 'O ECM30 do conversor oficial saiu sem a categoria herdada; confira o .process gerado (category) e relate.';
-}
-
 /** Monta o `def` de aplicarDefinicao: descrição, volume e expediente vazios não são enviados (ficam como o ECM30 trouxe). */
 function definicaoParaAplicar(def) {
   const saida = { ...def };
@@ -372,6 +376,12 @@ export async function flowDeploy(client, args, internos = {}) {
   if (temSpec === temProcesso) {
     throw new Error('Informe exatamente uma entrada: spec (gera o .process num temporário) ou processo (caminho de <projeto>/workflow/diagrams/<x>.process).');
   }
+  if (temSpec && args.novo === false) {
+    // a spec monta o .process do zero e renumera as atividades: não serve para versão nova de processo existente
+    throw new Error(
+      'spec é só para processo novo (novo=true): gerar a versão nova de um processo existente a partir da spec renumera as atividades e quebra scripts e solicitações em andamento. Use fluig_flow_import, edite o .process e publique com processo e novo=false.'
+    );
+  }
   const conversor = conferirConversor(args.conversor);
   const spec = temSpec ? lerSpec(args.spec) : null;
 
@@ -392,45 +402,13 @@ export async function flowDeploy(client, args, internos = {}) {
   let avisos;
   let xmlServidor = null; // versão corrente no servidor, só para novo=false
   if (spec) {
-    // processo existente: a definição geral (categoria, volume, expediente, instrução) é do servidor
-    let geral;
-    if (!args.novo) {
-      try {
-        xmlServidor = await client.exportProcessXml(spec.processId);
-        geral = lerDefinicao(xmlServidor);
-      } catch (e) {
-        return {
-          publicado: false,
-          motivo: 'processo não encontrado no servidor para herdar a definição (use novo=true para processo novo)',
-          erro: msg(e),
-        };
-      }
-    }
-    const r = await gerarArtefatos(spec, { versaoAlvo: args.versaoAlvo, conversor, lookups: criarLookups(client), geral, cache: args.cache, ...ganchos(internos) });
+    const r = await gerarArtefatos(spec, { versaoAlvo: args.versaoAlvo, conversor, lookups: criarLookups(client), cache: args.cache, ...ganchos(internos) });
     if (!r.ok) return { publicado: false, motivo: 'spec com erro', erros: r.erros, avisos: r.avisos };
     avisos = r.avisos || [];
-    let ecm30Spec = r.ecm30.conteudo;
-    if (geral) {
-      // a definição do servidor vale qualquer que seja o conversor que gerou o ECM30
-      ecm30Spec = aplicarDefinicao(ecm30Spec, definicaoParaAplicar({ ...geral, descricao: spec.descricao || geral.descricao || spec.processId }), {
-        versaoAlvo: args.versaoAlvo,
-      });
-      const trocada = recusaCategoria(geral.categoria, lerDefinicao(ecm30Spec).categoria, {
-        conversor: r.conversor,
-        avisos,
-        dica: dicaCategoria(r.conversor, 'spec', geral.categoria),
-      });
-      if (trocada) return trocada;
-      avisos.push({
-        codigo: 'W_DEFINICAO_HERDADA',
-        mensagem: `Categoria "${geral.categoria}", volume, expediente e instrução herdados do processo no servidor${spec.descricao ? '' : '; descrição também'}${args.versaoAlvo === '2.0' && (geral.processCategoryId || geral.icon) ? '; categoria 2.0 e ícone também' : ''}.`,
-        caminho: 'processo',
-      });
-    }
     if (avisos.some((a) => BLOQUEIAM.includes(a.codigo))) {
       return { publicado: false, motivo: 'papel ou campo não conferido no servidor', avisos };
     }
-    ecm30 = ecm30Spec;
+    ecm30 = r.ecm30.conteudo;
     svg = r.svg.conteudo;
     processId = spec.processId;
     info = r.conversor;
@@ -459,7 +437,7 @@ export async function flowDeploy(client, args, internos = {}) {
       const trocada = recusaCategoria(doServidor.categoria, lerDefinicao(ecm30).categoria, {
         conversor: info,
         avisos,
-        dica: dicaCategoria(info, 'processo', doServidor.categoria),
+        dica: `Ajuste a categoria no .process (VS Code) para "${doServidor.categoria}" e regenere.`,
       });
       if (trocada) return trocada;
     }

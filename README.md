@@ -204,7 +204,13 @@ campos do formulário e versão do Fluig; `generate` devolve `.process` + ECM30 
 `regenerate` refaz ECM30 e SVG de um `.process` editado; `read` exporta um processo existente como
 spec, com `origem` para gerar de novo sem renumerar; `import` monta o `.process` de um processo do
 servidor como o Studio, sem renumerar (veja abaixo); `deploy` publica uma versão com o SVG, a partir
-de uma `spec` ou de um `.process` (`processo`). Fora da v1: subprocesso, eventos de mensagem e sinal,
+de uma `spec` (só processo novo) ou de um `.process` (`processo`).
+
+**Spec é só para processo novo.** Ela monta o `.process` do zero, com as atividades numeradas 1, 2, 3…;
+numa versão nova de um processo existente isso quebraria scripts (`WKNumState`), formulário e
+solicitações em andamento. Por isso `fluig_flow_deploy` recusa `spec` com `novo=false`, e
+`fluig_flow_generate` avisa `W_PROCESSO_EXISTENTE` quando o processo já existe no servidor. Para nova
+versão: `fluig_flow_import` → editar o `.process` → `fluig_flow_deploy` com `processo` e `novo=false`. Fora da v1: subprocesso, eventos de mensagem e sinal,
 timer e atribuição fora de papel.
 
 Descrição completa de cada uma: `node server.js --list`.

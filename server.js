@@ -1136,7 +1136,7 @@ const TOOLS = [
   },
   {
     name: 'fluig_flow_generate',
-    description: 'Gera o .process (editável no VS Code pela Fluiggers), o ECM30 e o SVG de um processo a partir da spec v1. O .process sai das funções da extensão Fluiggers; ECM30 e SVG, do conversor oficial do Studio (se instalado) ou do gerador próprio (plano B, com aviso W_ECM30_NAO_OFICIAL). Só grava em disco se informar projeto (caminho absoluto da pasta que tem ou terá workflow/); sem projeto devolve o conteúdo. Não escreve no servidor (só lê papéis, campos e versão). Não sobrescreve um .process diferente sem sobrescrever=true (faz backup). modeloProcessId e origem são ignorados com aviso.',
+    description: 'Gera o .process (editável no VS Code pela Fluiggers), o ECM30 e o SVG de um processo a partir da spec v1. O .process sai das funções da extensão Fluiggers; ECM30 e SVG, do conversor oficial do Studio (se instalado) ou do gerador próprio (plano B, com aviso W_ECM30_NAO_OFICIAL). Só grava em disco se informar projeto (caminho absoluto da pasta que tem ou terá workflow/); sem projeto devolve o conteúdo. Não escreve no servidor (só lê papéis, campos e versão). Não sobrescreve um .process diferente sem sobrescrever=true (faz backup). A spec é para processo novo: se o processo já existir no servidor, avisa W_PROCESSO_EXISTENTE (para nova versão, use fluig_flow_import). modeloProcessId e origem são ignorados com aviso.',
     inputSchema: S({
       spec: { type: 'object', description: 'spec v1 do fluxo' },
       versaoAlvo: { type: 'string', enum: ['1.8.2', '2.0'], description: 'versão do Fluig para a qual o ECM30 será gerado' },
@@ -1184,9 +1184,9 @@ const TOOLS = [
   },
   {
     name: 'fluig_flow_deploy',
-    description: '⚠️ ESCRITA ESTRUTURAL. Publica uma versão do processo pelo SOAP oficial (deployProcess: createWorkFlowProcessVersion → importProcess → releaseProcess), com o ECM30 e o SVG do desenho. Entrada: exatamente uma de spec (gera o .process num temporário) ou processo (caminho de <projeto>/workflow/diagrams/<x>.process, regenerado antes). Exige confirm=true. Recusa env="prod" nesta versão, versaoAlvo maior que a versão do servidor, spec com erro e papel/campo não conferido. Sem conversor oficial instalado usa o plano B e avisa (W_ECM30_NAO_OFICIAL). Use fluig_flow_validate antes.',
+    description: '⚠️ ESCRITA ESTRUTURAL. Publica uma versão do processo pelo SOAP oficial (deployProcess: createWorkFlowProcessVersion → importProcess → releaseProcess), com o ECM30 e o SVG do desenho. Entrada: exatamente uma de spec (só processo novo, novo=true: gera o .process num temporário) ou processo (caminho de <projeto>/workflow/diagrams/<x>.process, regenerado antes; para nova versão de processo existente, importe com fluig_flow_import). Exige confirm=true. Recusa env="prod" nesta versão, spec com novo=false (renumeraria as atividades), versaoAlvo maior que a versão do servidor, spec com erro e papel/campo não conferido. Sem conversor oficial instalado usa o plano B e avisa (W_ECM30_NAO_OFICIAL). Use fluig_flow_validate antes.',
     inputSchema: S({
-      spec: { type: 'object', description: 'spec v1 do fluxo (use spec OU processo)' },
+      spec: { type: 'object', description: 'spec v1 do fluxo, só para processo novo (use spec OU processo)' },
       processo: str('caminho absoluto de <projeto>/workflow/diagrams/<x>.process (use spec OU processo)'),
       versaoAlvo: { type: 'string', enum: ['1.8.2', '2.0'], description: 'versão do Fluig para a qual o ECM30 será gerado' },
       novo: { type: 'boolean', description: 'true = processo novo; false = nova versão de processo existente' },
