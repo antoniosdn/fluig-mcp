@@ -53,6 +53,13 @@ node server.js --list
 `--list` não carrega configuração nenhuma, de propósito: você consegue auditar a superfície
 inteira antes de confiar uma senha ao processo.
 
+O `npm install` não baixa nenhum JAR da TOTVS nem cria o cache `~/.fluig-mcp`. Os JARs do Fluig
+Studio que o conversor oficial e o importador usam só entram na máquina quando você roda
+`fluig-mcp instalar-conversor` (veja [Regenerar ECM30 e SVG](#regenerar-ecm30-e-svg-de-um-process)).
+Nenhuma ferramenta MCP baixa nada sozinha: sem o cache, `regenerate` e `generate` usam o gerador
+próprio com o aviso `W_ECM30_NAO_OFICIAL`, e `fluig_flow_import` falha com `E_IMPORTADOR_AUSENTE`,
+indicando o comando.
+
 ## Configuração
 
 Nenhuma variável tem default. Host ou senha embutidos no código seriam um vazamento esperando
@@ -234,6 +241,9 @@ fluig-mcp regenerar <arquivo.process> [1.8.2|2.0] [--proprio | --oficial] [--nao
 
   O mesmo comando instala junto o importador do Studio (veja "Importar processo do servidor");
   `--sem-importador` pula essa parte.
+  Só esse comando grava no cache: `npm install` e as ferramentas MCP nunca baixam JAR. Sem o cache,
+  `regenerar` cai no plano B abaixo (aviso `W_ECM30_NAO_OFICIAL`); com `--oficial` falha com
+  `E_CONVERSOR_AUSENTE`, e a mensagem traz o comando para instalar.
 - **Licença:** os JARs são da TOTVS e da Eclipse Foundation (EPL) e ficam só na sua máquina; este
   repositório não os redistribui. O download com `--baixar` é feito por quem roda o comando, sob esses termos.
 - **Plano B:** sem conversor instalado (ou com `--proprio`), o ECM30 sai do gerador próprio, com o aviso
