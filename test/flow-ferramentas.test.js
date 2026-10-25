@@ -708,6 +708,58 @@ test('flowDeploy: processo com conversor oficial e categoria diferente dá a dic
   }
 });
 
+/** Troca o bloco de nível 1 de índice `n` (14 = ProcessFormField) de um ECM30 por `bloco`. */
+function trocarBloco(xml, n, bloco) {
+  const m = [...xml.matchAll(/^ {2}<([A-Za-z]+)(\/?)>/gm)][n];
+  const ini = m.index;
+  const fim = m[2] === '/' ? ini + m[0].length : xml.indexOf('\n  </list>', ini) + '\n  </list>'.length;
+  return xml.slice(0, ini) + bloco + xml.slice(fim);
+}
+const camposDescritores = (pares) =>
+  `  <list>\n${pares.map(([id, slot]) => `    <ProcessFormField>\n      <processFormFieldPK>\n        <companyId>1</companyId>\n        <processId>proc_teste</processId>\n        <fieldId>${id}</fieldId>\n      </processFormFieldPK>\n      <fieldDescription>${id}</fieldDescription>\n      <slotId>${slot}</slotId>\n    </ProcessFormField>\n`).join('')}  </list>`;
+
+test('flowDeploy: novo=false reaplica o slotId dos campos descritores do servidor (W_SLOTS_DO_SERVIDOR)', async () => {
+  const x = await cenarioForaDaV1();
+  try {
+    const servidor = XML_SERVIDOR_SEM_CATEGORIA.replace(/<\/list>$/, `${camposDescritores([['date0', 2], ['number16', 1]])}</list>`);
+    const executar = async (arquivo, args) => {
+      if (args[0] === '-version') return { stdout: '', stderr: 'openjdk version "21"' };
+      const g = readFileSync(join(x.processo, '..', '..', '.resources', 'proc_teste.ecm30.xml'), 'utf8');
+      writeFileSync(args[args.indexOf('Ecm30Bridge') + 2], trocarBloco(g, 14, camposDescritores([['date0', 1], ['number16', 2]])));
+      return { stdout: '', stderr: '' };
+    };
+    const c = clienteFalso({ xmlExport: servidor });
+    const r = await flowDeploy(c, ENTRADA({ spec: undefined, processo: x.processo, novo: false, conversor: 'oficial', cache: x.cache }), { _tabela: x.tabela, executar, java: '/falso/bin/java' });
+    assert.equal(r.publicado, true, JSON.stringify(r));
+    assert.ok(codigos(r.avisos).includes('W_SLOTS_DO_SERVIDOR'));
+    const d = c.chamadas.find((y) => y.fn === 'deployProcess');
+    assert.match(d.xml, /<fieldId>date0<\/fieldId>\s*<\/processFormFieldPK>\s*<fieldDescription>date0<\/fieldDescription>\s*<slotId>2<\/slotId>/);
+    assert.match(d.xml, /<fieldId>number16<\/fieldId>\s*<\/processFormFieldPK>\s*<fieldDescription>number16<\/fieldDescription>\s*<slotId>1<\/slotId>/);
+
+    // campos reordenados no .process: vale a numeração nova, com aviso
+    const reordenar = async (arquivo, args) => {
+      if (args[0] === '-version') return { stdout: '', stderr: 'openjdk version "21"' };
+      const g = readFileSync(join(x.processo, '..', '..', '.resources', 'proc_teste.ecm30.xml'), 'utf8');
+      writeFileSync(args[args.indexOf('Ecm30Bridge') + 2], trocarBloco(g, 14, camposDescritores([['number16', 1], ['date0', 2]])));
+      return { stdout: '', stderr: '' };
+    };
+    const c3 = clienteFalso({ xmlExport: servidor });
+    const r3 = await flowDeploy(c3, ENTRADA({ spec: undefined, processo: x.processo, novo: false, conversor: 'oficial', cache: x.cache }), { _tabela: x.tabela, executar: reordenar, java: '/falso/bin/java' });
+    assert.equal(r3.publicado, true, JSON.stringify(r3));
+    assert.ok(codigos(r3.avisos).includes('W_SLOTS_REORDENADOS'));
+    assert.ok(!codigos(r3.avisos).includes('W_SLOTS_DO_SERVIDOR'));
+    assert.match(c3.chamadas.find((y) => y.fn === 'deployProcess').xml, /<fieldId>number16<\/fieldId>\s*<\/processFormFieldPK>\s*<fieldDescription>number16<\/fieldDescription>\s*<slotId>1<\/slotId>/);
+
+    // processo novo não consulta o servidor: nada a reaplicar
+    const c2 = clienteFalso({ xmlExport: servidor });
+    const r2 = await flowDeploy(c2, ENTRADA({ spec: undefined, processo: x.processo, novo: true, conversor: 'oficial', cache: x.cache }), { _tabela: x.tabela, executar, java: '/falso/bin/java' });
+    assert.equal(r2.publicado, true, JSON.stringify(r2));
+    assert.ok(!codigos(r2.avisos).includes('W_SLOTS_DO_SERVIDOR'));
+  } finally {
+    rmSync(x.raiz, { recursive: true, force: true });
+  }
+});
+
 test('flowDeploy: liberação recusada no formato 2.0 lê gatewayError e processError', async () => {
   const texto =
     'releaseProcess retornou ok=false: {activity=Atividades, gatewayError=[Gateway 6 - Aprovado? sem saída padrão.], integrationError=[], attachmentSecurityError=[], flowError=[], activityError=[], processError=[Processo sem formulário.], subProcessError=[], end=Erro na liberação da versão., ok=false}';

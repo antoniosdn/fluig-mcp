@@ -87,6 +87,76 @@ export async function versaoJava(caminho, { executar = executarPadrao } = {}) {
   return major;
 }
 
+// ---------------------------------------------------------------- importador do Studio
+
+/** O SWT do Studio (Neon) só existe para x86_64: o Java do importador tem de ser dessa arquitetura. */
+export const ARQUITETURAS_IMPORTADOR = Object.freeze(['x86_64', 'amd64']);
+
+/**
+ * Java do importador: opcoes.javaImportador → FLUIG_MCP_JAVA_IMPORTADOR → no macOS,
+ * `/usr/libexec/java_home -a x86_64` → a mesma busca do conversor (resolverJava).
+ */
+export async function resolverJavaImportador({ javaImportador, env = process.env, existe = existsSync, plataforma = process.platform, executar = executarPadrao } = {}) {
+  for (const fonte of [javaImportador, env.FLUIG_MCP_JAVA_IMPORTADOR]) {
+    if (fonte && String(fonte).trim()) {
+      return deCaminho(fonte, existe, plataforma) || semAspas(fonte);
+    }
+  }
+  if (plataforma === 'darwin') {
+    try {
+      const r = await executar('/usr/libexec/java_home', ['-a', 'x86_64'], { ...OPCOES_EXECUCAO, timeout: 30000 });
+      const home = String((r && r.stdout) || '').trim();
+      const exe = home && deCaminho(home, existe, plataforma);
+      if (exe) return exe;
+    } catch {
+      /* sem Java x86_64 registrado: segue a busca normal */
+    }
+  }
+  return resolverJava({ env, existe, plataforma });
+}
+
+/** 'os.arch = x86_64' na saída de `java -XshowSettings:properties -version`. */
+export function lerArquiteturaJava(texto) {
+  const m = /^\s*os\.arch\s*=\s*(\S+)\s*$/m.exec(String(texto));
+  if (!m) throw new ErroFluxo('E_JAVA_ARQUITETURA', `Não foi possível ler a arquitetura do Java (os.arch) na saída: ${String(texto).slice(0, 200)}`);
+  return m[1];
+}
+
+/** Roda `java -XshowSettings:properties -version` uma vez: { major, arquitetura }. Exige Java 8+ x86_64. */
+export async function conferirJavaImportador(caminho, { executar = executarPadrao } = {}) {
+  let r;
+  try {
+    r = await executar(caminho, ['-XshowSettings:properties', '-version'], { ...OPCOES_EXECUCAO, timeout: 30000 });
+  } catch (e) {
+    throw new ErroFluxo(
+      'E_JAVA_AUSENTE',
+      `Java do importador não encontrado ou não executou (${caminho}): ${e && e.message}. Instale um JDK 8 ou superior x64 (no Mac com chip Apple ele roda sob Rosetta) ou defina FLUIG_MCP_JAVA_IMPORTADOR.`
+    );
+  }
+  const texto = `${r.stderr || ''}\n${r.stdout || ''}`;
+  const major = lerVersaoJava(texto);
+  if (major < 8) {
+    throw new ErroFluxo('E_JAVA_VERSAO', `Java ${major} não serve para o importador: exige Java 8 ou superior x64. Defina FLUIG_MCP_JAVA_IMPORTADOR.`);
+  }
+  const arquitetura = lerArquiteturaJava(texto);
+  if (!ARQUITETURAS_IMPORTADOR.includes(arquitetura)) {
+    throw new ErroFluxo(
+      'E_JAVA_ARQUITETURA',
+      `O Java ${caminho} é ${arquitetura}; o importador do Studio usa o SWT x86_64 e precisa de um Java x64. Instale um JDK 8 ou superior x64 (no Mac com chip Apple ele roda sob Rosetta) e aponte FLUIG_MCP_JAVA_IMPORTADOR para ele.`
+    );
+  }
+  return { major, arquitetura };
+}
+
+/** Argumentos do `java` para a ponte do importador. No macOS o SWT exige a thread principal. */
+export function argumentosImportador({ major, plataforma = process.platform, classpath, entrada, pastaSaida, processId, servidor }) {
+  const args = [];
+  if (plataforma === 'darwin') args.push('-XstartOnFirstThread');
+  if (major >= 9) args.push(...ADD_OPENS);
+  args.push('-cp', classpath.join(delimiter), 'ImportadorBridge', entrada, pastaSaida, processId, servidor);
+  return args;
+}
+
 /** Argumentos do `java` para a ponte. `classpath` = [classesDaPonte, ...jars, xstreamJar]. */
 export function argumentosJava({ major, classpath, entrada, saida, versao }) {
   const args = [];

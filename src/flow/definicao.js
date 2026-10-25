@@ -35,6 +35,48 @@ export function lerDefinicao(xml) {
   };
 }
 
+const RE_CAMPO_DESCRITOR = /<ProcessFormField>[\s\S]*?<\/ProcessFormField>/g;
+
+/** fieldId → slotId dos campos descritores (<ProcessFormField>) de um ECM30. */
+export function lerSlots(xml) {
+  const slots = new Map();
+  for (const m of String(xml).matchAll(RE_CAMPO_DESCRITOR)) {
+    const campo = /<fieldId>([^<]*)<\/fieldId>/.exec(m[0]);
+    const slot = /<slotId>([^<]*)<\/slotId>/.exec(m[0]);
+    if (campo && slot) slots.set(campo[1], slot[1]);
+  }
+  return slots;
+}
+
+/**
+ * Reaplica o slotId do servidor aos campos descritores do ECM30 novo. O .process só guarda a ordem da
+ * lista, e o conversor do Studio numera os slots por essa ordem (1, 2, 3…), o que troca as colunas de
+ * consulta de lugar. Só vale quando os dois têm os mesmos campos NA MESMA ORDEM: se a ordem mudou, foi
+ * o usuário que reordenou no editor, e a numeração nova fica. Devolve { xml, aplicado, motivo? }.
+ */
+export function aplicarSlots(xml, xmlServidor) {
+  const servidor = lerSlots(xmlServidor);
+  const novo = lerSlots(xml);
+  if (novo.size === 0 && servidor.size === 0) return { xml, aplicado: false, motivo: 'sem campos descritores' };
+  const iguais = novo.size === servidor.size && [...novo.keys()].every((k) => servidor.has(k));
+  if (!iguais) return { xml, aplicado: false, motivo: 'os campos descritores mudaram' };
+  if ([...novo.keys()].join('\n') !== [...servidor.keys()].join('\n')) {
+    return { xml, aplicado: false, motivo: 'os campos descritores foram reordenados' };
+  }
+  let mudou = false;
+  const saida = xml.replace(RE_CAMPO_DESCRITOR, (bloco) => {
+    const campo = /<fieldId>([^<]*)<\/fieldId>/.exec(bloco);
+    if (!campo) return bloco;
+    return bloco.replace(/<slotId>([^<]*)<\/slotId>/, (atual, valor) => {
+      const alvo = servidor.get(campo[1]);
+      if (alvo === valor) return atual;
+      mudou = true;
+      return `<slotId>${alvo}</slotId>`;
+    });
+  });
+  return { xml: saida, aplicado: mudou };
+}
+
 const CAMPOS_COMUNS = [
   ['descricao', 'processDescription'],
   ['categoria', 'categoryId'],

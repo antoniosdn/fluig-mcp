@@ -4,6 +4,11 @@
  * Os JARs da TOTVS e da Eclipse Foundation NUNCA entram no repositório: são copiados (ou baixados)
  * para <cache>/studio/<versao>/ na máquina de quem roda o comando, conferidos pelo SHA-256 da
  * tabela CONVERSORES (medidos no passo 5.2, ver plano-passo5-2-regenerar.md §1.1).
+ *
+ * O importador do Studio (ECM30 → .process, plano-importador-studio.md) precisa de outros 17 JARs:
+ * ficam em <cache>/importador/<versao>/, tabela IMPORTADORES, com o SWT da plataforma. Não vão para
+ * studio/<versao>/ porque a reinstalação do conversor troca essa pasta inteira e a conferência
+ * recusa JAR fora da tabela em plugins/.
  */
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
@@ -66,6 +71,71 @@ export const CONVERSORES = Object.freeze({
   }),
 });
 
+/** JARs do Eclipse Neon.3 que o importador usa, iguais no Studio 1.8.2.0 e no 2.0.0.2 (medidos em 24/10/2026). */
+const IMPORTADOR_ECLIPSE = (comUrl) => [
+  jar('org.eclipse.graphiti_0.13.2.v20161129-0820.jar', 323351, '7a3b65ec972af5dd7b7eae8aaa770440ee03879bdcffffc71aba0bad408abaed', 'eclipse', comUrl),
+  jar('org.eclipse.graphiti.ui_0.13.2.v20161129-0820.jar', 695255, '586cf3272b52d44377cdcad9fb396b1e5b5b54bd60649e9d4283754c6dc482b2', 'eclipse', comUrl),
+  jar('org.eclipse.emf.transaction_1.9.0.201606071900.jar', 172879, 'c60b46ac9b512252dfbff4508fc787423e16201ac8c0ae1032640a66d56f77c8', 'eclipse', comUrl),
+  jar('org.eclipse.emf.edit_2.12.0.v20160526-0356.jar', 278989, '9e315e867ace155219ba3ec14e27f513ca117f545624bbace263e28e520bf06d', 'eclipse', comUrl),
+  jar('org.eclipse.draw2d_3.10.100.201606061308.jar', 616652, '6f8efee3b35175ed650c1dace639acc1bdc0f373332bb58a27069c34622ad062', 'eclipse', comUrl),
+  jar('org.eclipse.equinox.preferences_3.6.1.v20160815-1406.jar', 133114, '8b85e6a5f8a2080ef661a04f6eeae50d2c5c913bae76e6c5b193b2aac14c06a3', 'eclipse', comUrl),
+  jar('org.eclipse.ui.views.properties.tabbed_3.7.0.v20160310-0903.jar', 110526, '267cbc63c2a37714a2e37288af94d3c17d308fa148c87e4947c8f0679472d9da', 'eclipse', comUrl),
+  jar('org.eclipse.gef_3.11.0.201606061308.jar', 999341, 'ca5e25dddc44ad0c220dea3b3283059f67fca884480f6267e70e22a8b872e06c', 'eclipse', comUrl),
+  jar('org.eclipse.ui.workbench_3.108.3.v20170216-1539.jar', 4041043, 'b50e5b29a4f3fb9f206f137ed49520dfd0e3b5b125826eb91de14add1ed1c3ba', 'eclipse', comUrl),
+  jar('org.eclipse.equinox.registry_3.6.100.v20160223-2218.jar', 186860, '5400bad0b52ca8318ba44504e58d4b01821adcf4e04c99efae101b87aa4c6ccd', 'eclipse', comUrl),
+  jar('org.eclipse.core.commands_3.8.1.v20161221-1651.jar', 115396, 'b619eaed6360172cb38972b2e10a73d0706df162c89de66804adbc2a0648b76f', 'eclipse', comUrl),
+  jar('org.eclipse.jface_3.12.2.v20170113-2113.jar', 1087190, 'bf3995710bdd28c59d7126b11792ab2a79e9179948490e2605b2e76c55dbced9', 'eclipse', comUrl),
+  jar('org.eclipse.core.resources_3.11.1.v20161107-2032.jar', 882701, '01cf3ffdad887079fca0abf0edaef353039f389acadd14044d812ad28f85194d', 'eclipse', comUrl),
+  jar('org.eclipse.core.jobs_3.8.0.v20160509-0411.jar', 111093, '50dbae7c3aa2c6fa00667fb891e165e8312bd1fef5878d7f161747b1afc8f186', 'eclipse', comUrl),
+];
+
+/** SWT por plataforma (só x86_64 no Neon). Linux fica de fora até a tabela ter o hash do gtk. */
+const IMPORTADOR_SWT = (comUrl) => ({
+  darwin: jar('org.eclipse.swt.cocoa.macosx.x86_64_3.105.3.v20170228-0512.jar', 2457231, 'a938b8d291d0b023950f2e719885c0de766e93b688e66fc9d1a5e48df5b9da15', 'eclipse', comUrl),
+  win32: jar('org.eclipse.swt.win32.win32.x86_64_3.105.3.v20170228-0512.jar', 2872490, '94f31d6395eda1b37e39687e7405838eefcce147afdfc998444425f10bc87e13', 'eclipse', comUrl),
+});
+
+const congelarImportador = (jars, swt) =>
+  Object.freeze({
+    jars: Object.freeze(jars.map(Object.freeze)),
+    swt: Object.freeze(Object.fromEntries(Object.entries(swt).map(([p, j]) => [p, Object.freeze(j)]))),
+  });
+
+/**
+ * JARs do importador por versão do Studio, além dos do conversor da mesma versão (o classpath é
+ * conversor + importador + xstream). A ordem é a do classpath; o SWT da plataforma vai no fim.
+ */
+export const IMPORTADORES = Object.freeze({
+  '1.8.2.0': congelarImportador(
+    [
+      jar('com.totvs.tds.ecm.designer.gui_1.8.2.0.jar', 1798061, '4ffa94892b64692a418192204fb26742537902b2ebc1e208f0169a1a0d922a4c', 'totvs', true),
+      jar('com.totvs.tds.ecm.designer.integration_1.8.2.0.jar', 17732, '63949ee175f6987a93733560c1917935a2908965f1948c798f9bfaf916f3a26e', 'totvs', true),
+      ...IMPORTADOR_ECLIPSE(true),
+    ],
+    IMPORTADOR_SWT(true)
+  ),
+  '2.0.0.2': congelarImportador(
+    [
+      jar('com.totvs.tds.ecm.designer.gui_2.0.0.2.jar', 1810053, '0bcb3fa824399596dab460d694067863234b8a8fca36354b6951caa28f0c7817', 'totvs', false),
+      jar('com.totvs.tds.ecm.designer.integration_2.0.0.2.jar', 17731, 'b33142ed7d964057560a94704d143af530a9f922f8a133c2327a08a3ee38e08a', 'totvs', false),
+      ...IMPORTADOR_ECLIPSE(false),
+    ],
+    IMPORTADOR_SWT(false)
+  ),
+});
+
+/** Lista completa do importador numa plataforma (JARs + SWT). Plataforma sem SWT na tabela → E_IMPORTADOR_PLATAFORMA. */
+export function jarsImportador(def, plataforma = process.platform) {
+  const swt = def.swt[plataforma];
+  if (!swt) {
+    throw new ErroFluxo(
+      'E_IMPORTADOR_PLATAFORMA',
+      `O importador do Studio não tem o SWT para a plataforma "${plataforma}" (só macOS e Windows, x86_64). Use outra máquina ou edite o .process na extensão Fluiggers.`
+    );
+  }
+  return [...def.jars, swt];
+}
+
 export const W_STUDIO_SUBSTITUTO =
   'usando o conversor do Studio 2.0.0.2 para a versão 1.8.2; nos 10 processos do demo a saída é idêntica à do 1.8.2.0';
 
@@ -99,8 +169,82 @@ export function studioParaVersao(versaoAlvo, { cache } = {}) {
   return null;
 }
 
+const dirImportadorDe = (cache, v) => join(cache, 'importador', v);
+
+export const W_IMPORTADOR_SUBSTITUTO =
+  'usando o importador do Studio 2.0.0.2 para a versão 1.8.2 (o 1.8.2.0 não está instalado)';
+
+/**
+ * Mesma regra de studioParaVersao, mas exige conversor E importador da mesma versão (o classpath do
+ * importador inclui os JARs do conversor). "Instalado" = há os dois manifesto.json.
+ */
+export function importadorParaVersao(versaoAlvo, { cache } = {}) {
+  const base = cache || dirCache();
+  const tem = (v) => existsSync(join(dirStudioDe(base, v), 'manifesto.json')) && existsSync(join(dirImportadorDe(base, v), 'manifesto.json'));
+  const de = (v, aviso) => ({ versaoStudio: v, dirStudio: dirStudioDe(base, v), dirImportador: dirImportadorDe(base, v), aviso });
+  if (versaoAlvo === '2.0') return tem('2.0.0.2') ? de('2.0.0.2', null) : null;
+  if (tem('1.8.2.0')) return de('1.8.2.0', null);
+  if (tem('2.0.0.2')) return de('2.0.0.2', { codigo: 'W_IMPORTADOR_SUBSTITUTO', mensagem: W_IMPORTADOR_SUBSTITUTO });
+  return null;
+}
+
 const falhaCache = (arquivo, motivo) =>
   new ErroFluxo('E_CONVERSOR_CACHE', `${arquivo}: ${motivo}. Rode de novo: ${DICA}`);
+
+/** Confere tamanho e SHA-256 de <dir>/<rel> contra `esperado` ({bytes, sha256}). */
+async function conferirArquivo(dir, rel, esperado, falha) {
+  let b;
+  try {
+    b = await readFile(join(dir, ...rel.split('/')));
+  } catch {
+    throw falha(rel, 'ausente');
+  }
+  if (b.length !== esperado.bytes) throw falha(rel, `tamanho ${b.length}, esperado ${esperado.bytes}`);
+  const h = sha(b);
+  if (h !== esperado.sha256) throw falha(rel, `SHA-256 ${h}, esperado ${esperado.sha256}`);
+}
+
+/** Confere tamanho e SHA-256 de cada JAR em <dir>/plugins e recusa JAR fora da lista. */
+async function conferirPlugins(dir, jars, falha) {
+  for (const j of jars) await conferirArquivo(dir, `plugins/${j.nome}`, j, falha);
+  let presentes = [];
+  try {
+    presentes = await readdir(join(dir, 'plugins'));
+  } catch {
+    /* já falhou acima */
+  }
+  const permitidos = new Set(jars.map((j) => j.nome));
+  for (const p of presentes) {
+    if (p.toLowerCase().endsWith('.jar') && !permitidos.has(p)) throw falha(`plugins/${p}`, 'JAR que não está na tabela');
+  }
+}
+
+const falhaImportador = (arquivo, motivo) =>
+  new ErroFluxo('E_IMPORTADOR_CACHE', `importador: ${arquivo}: ${motivo}. Rode de novo: ${DICA}`);
+
+/**
+ * Confere o importador a cada execução, contra a TABELA. Devolve só os JARs do importador; quem
+ * monta o classpath junta os do conversor (conferirConversor) e o xstream.
+ */
+export async function conferirImportador(dirImportador, versaoStudio, { tabela = IMPORTADORES, plataforma = process.platform } = {}) {
+  const def = tabela[versaoStudio];
+  if (!def) throw falhaImportador(versaoStudio, 'versão do Studio sem importador na tabela');
+  const jars = jarsImportador(def, plataforma);
+  let manifesto;
+  try {
+    manifesto = JSON.parse(await readFile(join(dirImportador, 'manifesto.json'), 'utf8'));
+  } catch {
+    throw falhaImportador('manifesto.json', 'ausente ou ilegível');
+  }
+  if (manifesto.versaoStudio !== versaoStudio) {
+    throw falhaImportador('manifesto.json', `versão ${manifesto.versaoStudio} difere da esperada (${versaoStudio})`);
+  }
+  if (manifesto.plataforma !== plataforma) {
+    throw falhaImportador('manifesto.json', `instalado para "${manifesto.plataforma}", esta máquina é "${plataforma}"`);
+  }
+  await conferirPlugins(dirImportador, jars, falhaImportador);
+  return { classpath: jars.map((j) => join(dirImportador, 'plugins', j.nome)), swt: join(dirImportador, 'plugins', jars[jars.length - 1].nome) };
+}
 
 /** Confere o cache a cada execução (SHA-256 recalculado contra a TABELA, não contra o manifesto). */
 export async function conferirConversor(dirStudio, versaoStudio, { tabela = CONVERSORES } = {}) {
@@ -115,29 +259,8 @@ export async function conferirConversor(dirStudio, versaoStudio, { tabela = CONV
   if (manifesto.versaoStudio !== versaoStudio) {
     throw falhaCache('manifesto.json', `versão ${manifesto.versaoStudio} difere da esperada (${versaoStudio})`);
   }
-  const checar = async (rel, esperado) => {
-    let b;
-    try {
-      b = await readFile(join(dirStudio, ...rel.split('/')));
-    } catch {
-      throw falhaCache(rel, 'ausente');
-    }
-    if (b.length !== esperado.bytes) throw falhaCache(rel, `tamanho ${b.length}, esperado ${esperado.bytes}`);
-    const h = sha(b);
-    if (h !== esperado.sha256) throw falhaCache(rel, `SHA-256 ${h}, esperado ${esperado.sha256}`);
-  };
-  for (const j of def.jars) await checar(`plugins/${j.nome}`, j);
-  await checar('xstream.jar', def.xstream);
-  let presentes = [];
-  try {
-    presentes = await readdir(join(dirStudio, 'plugins'));
-  } catch {
-    /* já falhou acima */
-  }
-  const permitidos = new Set(def.jars.map((j) => j.nome));
-  for (const p of presentes) {
-    if (p.toLowerCase().endsWith('.jar') && !permitidos.has(p)) throw falhaCache(`plugins/${p}`, 'JAR que não está na tabela');
-  }
+  await conferirPlugins(dirStudio, def.jars, falhaCache);
+  await conferirArquivo(dirStudio, 'xstream.jar', def.xstream, falhaCache);
   return {
     classpath: def.jars.map((j) => join(dirStudio, 'plugins', j.nome)),
     xstream: join(dirStudio, 'xstream.jar'),
@@ -231,43 +354,90 @@ function extrairXstream(bufferBpmn, def) {
  * `fornecer(j)` devolve o Buffer de cada JAR da tabela.
  */
 async function gravarVersao({ cache, versaoStudio, def, fornecer, origem, forcar, log }) {
-  const raizStudio = join(cache, 'studio');
-  const destino = dirStudioDe(cache, versaoStudio);
   const tabelaLocal = { [versaoStudio]: def };
+  return gravarPasta({
+    raiz: join(cache, 'studio'),
+    destino: dirStudioDe(cache, versaoStudio),
+    versaoStudio,
+    jars: def.jars,
+    fornecer,
+    origem,
+    forcar,
+    log,
+    jaConferido: async (destino) => {
+      await conferirConversor(destino, versaoStudio, { tabela: tabelaLocal });
+      return def.jars.length + 1;
+    },
+    // o xstream.jar sai de dentro do JAR export.bpmn20
+    extras: async (tmp, buffers) => {
+      const nomeBpmn = def.jars.map((j) => j.nome).find((n) => RE_BPMN20.test(n));
+      if (!nomeBpmn) throw new ErroFluxo('E_FONTE', 'A tabela não tem o JAR export.bpmn20, de onde sai o xstream.jar.');
+      const xs = extrairXstream(buffers.get(nomeBpmn), def);
+      await writeFile(join(tmp, 'xstream.jar'), xs);
+      return { 'xstream.jar': xs };
+    },
+  });
+}
 
+/** Importador do Studio: <cache>/importador/<versão>/plugins, com o SWT da plataforma e a plataforma no manifesto. */
+async function gravarImportador({ cache, versaoStudio, def, plataforma, fornecer, origem, forcar, log }) {
+  const jars = jarsImportador(def, plataforma);
+  return gravarPasta({
+    raiz: join(cache, 'importador'),
+    destino: dirImportadorDe(cache, versaoStudio),
+    versaoStudio,
+    jars,
+    fornecer,
+    origem,
+    forcar,
+    log,
+    manifestoExtra: { plataforma },
+    jaConferido: async (destino) => {
+      await conferirImportador(destino, versaoStudio, { tabela: { [versaoStudio]: def }, plataforma });
+      return jars.length;
+    },
+  });
+}
+
+/**
+ * Monta a pasta em diretório temporário e só no fim faz rename para o destino.
+ * `fornecer(j)` devolve o Buffer de cada JAR; `extras(tmp, buffers)` grava arquivos derivados.
+ */
+async function gravarPasta({ raiz, destino, versaoStudio, jars, fornecer, origem, forcar, log, jaConferido, extras, manifestoExtra = {} }) {
   if (existsSync(destino) && !forcar) {
     try {
-      await conferirConversor(destino, versaoStudio, { tabela: tabelaLocal });
-      return { versaoStudio, dir: destino, arquivos: def.jars.length + 1, bytes: 0, jaInstalado: true };
+      const n = await jaConferido(destino);
+      return { versaoStudio, dir: destino, arquivos: n, bytes: 0, jaInstalado: true };
     } catch {
       /* inválido: reinstala */
     }
   }
 
-  await mkdir(raizStudio, { recursive: true });
-  const tmp = join(raizStudio, `.instalando-${versaoStudio}-${process.pid}-${randomBytes(4).toString('hex')}`);
+  await mkdir(raiz, { recursive: true });
+  const tmp = join(raiz, `.instalando-${versaoStudio}-${process.pid}-${randomBytes(4).toString('hex')}`);
   try {
     await mkdir(join(tmp, 'plugins'), { recursive: true });
     const arquivos = {};
     let total = 0;
-    let bufBpmn = null;
-    for (const j of def.jars) {
+    const buffers = new Map();
+    for (const j of jars) {
       const buf = await fornecer(j);
       conferirBytes(j.nome, buf, j);
       await writeFile(join(tmp, 'plugins', j.nome), buf);
       arquivos[`plugins/${j.nome}`] = { bytes: buf.length, sha256: sha(buf) };
       total += buf.length;
-      if (RE_BPMN20.test(j.nome)) bufBpmn = buf;
+      buffers.set(j.nome, buf);
       log(`  ${j.nome} (${buf.length} bytes) ok`);
     }
-    if (!bufBpmn) throw new ErroFluxo('E_FONTE', 'A tabela não tem o JAR export.bpmn20, de onde sai o xstream.jar.');
-    const xs = extrairXstream(bufBpmn, def);
-    await writeFile(join(tmp, 'xstream.jar'), xs);
-    arquivos['xstream.jar'] = { bytes: xs.length, sha256: sha(xs) };
-    total += xs.length;
+    if (extras) {
+      for (const [nome, buf] of Object.entries(await extras(tmp, buffers))) {
+        arquivos[nome] = { bytes: buf.length, sha256: sha(buf) };
+        total += buf.length;
+      }
+    }
     await writeFile(
       join(tmp, 'manifesto.json'),
-      JSON.stringify({ formato: 1, versaoStudio, instaladoEm: new Date().toISOString(), origem, arquivos }, null, 2) + '\n'
+      JSON.stringify({ formato: 1, versaoStudio, ...manifestoExtra, instaladoEm: new Date().toISOString(), origem, arquivos }, null, 2) + '\n'
     );
     let antigo = null;
     if (existsSync(destino)) {
@@ -302,6 +472,27 @@ async function instalarDeFonte({ versaoStudio, de, cache, tabela, forcar, log })
   }
 }
 
+/** Fornecedor de JAR por download; HTTP diferente de 200 ou falha de rede → E_BAIXAR. */
+const fornecerBaixando = (buscar) => async (j) => {
+  let r;
+  try {
+    r = await buscar(j.url);
+  } catch (e) {
+    throw new ErroFluxo('E_BAIXAR', `${j.url}: falha no download (${e && e.message}). Tente de novo ou use --de.`);
+  }
+  if (!r || r.status !== 200) {
+    throw new ErroFluxo('E_BAIXAR', `${j.url}: HTTP ${r && r.status}. Nada foi gravado; tente de novo ou use --de <pasta plugins | zip>.`);
+  }
+  return Buffer.from(await r.arrayBuffer());
+};
+
+function anunciarDownload(rotulo, jars, log) {
+  const total = jars.reduce((s, j) => s + j.bytes, 0);
+  log(`Download do ${rotulo} (${jars.length} arquivos, ${(total / 1048576).toFixed(1)} MB):`);
+  for (const j of jars) log(`  ${j.url}  ${j.nome}  ${j.bytes} bytes`);
+  log('O download é feito por você, sob os termos da TOTVS e da Eclipse Foundation (EPL). Cada arquivo só é aceito se o tamanho e o SHA-256 baterem com a tabela.');
+}
+
 async function instalarBaixando({ versaoStudio, cache, tabela, buscar, forcar, log }) {
   const def = tabela[versaoStudio];
   if (!def) throw new ErroFluxo('E_BAIXAR', `Versão ${versaoStudio} desconhecida. Versões: ${Object.keys(tabela).join(', ')}.`);
@@ -312,39 +503,94 @@ async function instalarBaixando({ versaoStudio, cache, tabela, buscar, forcar, l
       `Não há URL de download para o Studio ${versaoStudio}: o site oficial publica 2.0.0, não 2.0.0.2. Para o 2.0, use --de <pasta plugins | zip> de um Studio 2.0.0.2.`
     );
   }
-  const total = def.jars.reduce((s, j) => s + j.bytes, 0);
-  log(`Download do conversor do Studio ${versaoStudio} (${def.jars.length} arquivos, ${(total / 1048576).toFixed(1)} MB):`);
-  for (const j of def.jars) log(`  ${j.url}  ${j.nome}  ${j.bytes} bytes`);
-  log('O download é feito por você, sob os termos da TOTVS e da Eclipse Foundation (EPL). Cada arquivo só é aceito se o tamanho e o SHA-256 baterem com a tabela.');
-  const fornecer = async (j) => {
-    let r;
-    try {
-      r = await buscar(j.url);
-    } catch (e) {
-      throw new ErroFluxo('E_BAIXAR', `${j.url}: falha no download (${e && e.message}). Tente de novo ou use --de.`);
-    }
-    if (!r || r.status !== 200) {
-      throw new ErroFluxo('E_BAIXAR', `${j.url}: HTTP ${r && r.status}. Nada foi gravado; tente de novo ou use --de <pasta plugins | zip>.`);
-    }
-    return Buffer.from(await r.arrayBuffer());
-  };
+  anunciarDownload(`conversor do Studio ${versaoStudio}`, def.jars, log);
   return gravarVersao({
     cache,
     versaoStudio,
     def,
-    fornecer,
+    fornecer: fornecerBaixando(buscar),
     origem: { tipo: 'baixar', urls: def.jars.map((j) => j.url) },
     forcar,
     log,
   });
 }
 
+/** Pastas de importador já instaladas no cache, de outras versões do Studio. */
+function outrosImportadores(cache, versaoStudio, tabela) {
+  return Object.keys(tabela)
+    .filter((v) => v !== versaoStudio)
+    .map((v) => dirImportadorDe(cache, v))
+    .filter((d) => existsSync(join(d, 'manifesto.json')));
+}
+
 /**
- * Instala o conversor no cache.
+ * Importador da mesma versão, da mesma fonte do conversor. Nunca lança: o conversor já foi
+ * instalado, e o que faltar no importador volta como { instalado: false, codigo, motivo }.
+ */
+async function instalarImportador({ versaoStudio, de, baixar, cache, tabela, plataforma, buscar, forcar, log }) {
+  const def = tabela[versaoStudio];
+  if (!def) return null;
+  try {
+    const jars = jarsImportador(def, plataforma);
+    let r;
+    if (baixar) {
+      const semUrl = jars.filter((j) => !j.url);
+      if (semUrl.length) {
+        throw new ErroFluxo('E_BAIXAR', `Não há URL de download do importador do Studio ${versaoStudio}; use --de <pasta plugins | zip> de um Studio ${versaoStudio}.`);
+      }
+      anunciarDownload(`importador do Studio ${versaoStudio} (${plataforma})`, jars, log);
+      r = await gravarImportador({
+        cache,
+        versaoStudio,
+        def,
+        plataforma,
+        fornecer: fornecerBaixando(buscar),
+        origem: { tipo: 'baixar', urls: jars.map((j) => j.url) },
+        forcar,
+        log,
+      });
+    } else {
+      const fonte = await abrirFonte(de);
+      try {
+        // o que faltar na fonte (ex.: o SWT do Mac num Studio 2.0 de Windows) pode vir do importador de outra
+        // versão já instalado: os JARs do Eclipse e o SWT são os mesmos bytes, e o SHA-256 da tabela é conferido
+        const doCache = new Map();
+        for (const j of jars) {
+          if (fonte.tem(j.nome)) continue;
+          const achado = outrosImportadores(cache, versaoStudio, tabela).map((d) => join(d, 'plugins', j.nome)).find((c) => existsSync(c));
+          if (achado) doCache.set(j.nome, achado);
+        }
+        const ausentes = jars.filter((j) => !fonte.tem(j.nome) && !doCache.has(j.nome)).map((j) => j.nome);
+        if (ausentes.length) {
+          const dica = ausentes.some((n) => !/^com\.totvs\./.test(n))
+            ? ' Os do Eclipse e o SWT são os mesmos do 1.8.2.0: rode antes `fluig-mcp instalar-conversor --baixar 1.8.2.0` e repita.'
+            : '';
+          throw new ErroFluxo('E_FONTE', `faltam ${ausentes.length} JAR(s) do importador em ${de}: ${ausentes.join(', ')}.${dica}`);
+        }
+        log(`Instalando o importador do Studio ${versaoStudio} (${plataforma})...`);
+        for (const [n, c] of doCache) log(`  ${n}: do cache (${c})`);
+        const fornecer = (j) => (doCache.has(j.nome) ? readFile(doCache.get(j.nome)) : fonte.obter(j.nome));
+        const origem = doCache.size ? { ...fonte.origem, doCache: [...doCache.values()] } : fonte.origem;
+        r = await gravarImportador({ cache, versaoStudio, def, plataforma, fornecer, origem, forcar, log });
+      } finally {
+        await fonte.fechar();
+      }
+    }
+    return { instalado: true, ...r };
+  } catch (e) {
+    if (!(e instanceof ErroFluxo)) throw e;
+    return { instalado: false, codigo: e.codigo, motivo: e.message };
+  }
+}
+
+/**
+ * Instala o conversor no cache e, com `importador` (padrão), o importador da mesma versão.
  *  - baixar: versão (ex.: '1.8.2.0') → baixa, confere e instala. Devolve um resultado.
  *  - de: pasta/zip. Com `versao` → um resultado. Sem `versao` ou 'todas' → array, uma entrada por versão
  *    da tabela cujos JARs estejam todos na fonte; nenhuma completa → E_FONTE listando o que falta.
- * Resultado: { versaoStudio, dir, arquivos, bytes, jaInstalado }.
+ * Resultado: { versaoStudio, dir, arquivos, bytes, jaInstalado, importador? }, com
+ * importador = { instalado: true, dir, arquivos, bytes, jaInstalado } ou { instalado: false, codigo, motivo };
+ * ausente quando a versão não tem importador na tabela ou `importador` é false.
  */
 export async function instalarConversor({
   versao,
@@ -352,20 +598,28 @@ export async function instalarConversor({
   baixar = false,
   cache,
   tabela = CONVERSORES,
+  importador = true,
+  tabelaImportador = IMPORTADORES,
+  plataforma = process.platform,
   buscar = (url) => fetch(url),
   forcar = false,
   log = () => {},
 } = {}) {
   const base = cache ? resolve(cache) : dirCache();
+  const comImportador = async (r, fonte) => {
+    if (!importador) return r;
+    const imp = await instalarImportador({ versaoStudio: r.versaoStudio, ...fonte, cache: base, tabela: tabelaImportador, plataforma, buscar, forcar, log });
+    return imp ? { ...r, importador: imp } : r;
+  };
   if (baixar) {
     const v = typeof baixar === 'string' ? baixar : versao;
     if (!v) throw new ErroFluxo('E_BAIXAR', 'Informe a versão: --baixar 1.8.2.0.');
-    return instalarBaixando({ versaoStudio: v, cache: base, tabela, buscar, forcar, log });
+    return comImportador(await instalarBaixando({ versaoStudio: v, cache: base, tabela, buscar, forcar, log }), { baixar: true });
   }
   if (!de) throw new ErroFluxo('E_FONTE', 'Informe a fonte: --de <pasta plugins do Studio | raiz do Eclipse | studio.zip> ou --baixar 1.8.2.0.');
   if (versao && versao !== 'todas') {
     if (!tabela[versao]) throw new ErroFluxo('E_FONTE', `Versão ${versao} desconhecida. Versões: ${Object.keys(tabela).join(', ')}.`);
-    return instalarDeFonte({ versaoStudio: versao, de, cache: base, tabela, forcar, log });
+    return comImportador(await instalarDeFonte({ versaoStudio: versao, de, cache: base, tabela, forcar, log }), { de });
   }
   // todas as versões completas na fonte
   const fonte = await abrirFonte(de);
@@ -387,7 +641,7 @@ export async function instalarConversor({
   const resultados = [];
   for (const v of completas) {
     log(`Instalando o conversor do Studio ${v}...`);
-    resultados.push(await instalarDeFonte({ versaoStudio: v, de, cache: base, tabela, forcar, log }));
+    resultados.push(await comImportador(await instalarDeFonte({ versaoStudio: v, de, cache: base, tabela, forcar, log }), { de }));
   }
   return resultados;
 }

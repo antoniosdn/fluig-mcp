@@ -16,7 +16,7 @@ import { loadConfig, ambientesConfigurados } from './src/config.js';
 import { FluigClient } from './src/client.js';
 import { LOG_API_PADRAO, normalizarParametros, caminhoApi, resumirLog } from './src/logsearch.js';
 import { readFileSync } from 'node:fs';
-import { flowValidate, flowGenerate, flowRead, flowDeploy, flowRegenerate } from './src/flow/ferramentas.js';
+import { flowValidate, flowGenerate, flowRead, flowDeploy, flowRegenerate, flowImport } from './src/flow/ferramentas.js';
 
 const VERSAO = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version;
 
@@ -1170,6 +1170,19 @@ const TOOLS = [
     handler: async (args) => flowRead(client, args),
   },
   {
+    name: 'fluig_flow_import',
+    description: 'Importa um processo do servidor como o Fluig Studio faz ("importar processo"): exporta o XML ECM30 e monta o .process pelo importador do próprio Studio, com os ids iguais aos números do servidor (task30, flow31), raias, scripts de evento e literais. Use para fazer uma nova versão de um processo existente sem renumerar: importar → editar o .process → fluig_flow_deploy com processo e novo=false. Só lê o servidor. Grava em disco só com projeto (caminho absoluto; não sobrescreve um .process ou script diferente sem sobrescrever=true, com backup); sem projeto devolve o conteúdo. Exige o conversor e o importador do Studio instalados (fluig-mcp instalar-conversor) e um Java 8+ x64.',
+    inputSchema: S({
+      processId: str('id do processo'),
+      version: num('versão específica (opcional; padrão = versão corrente)'),
+      versaoAlvo: { type: 'string', enum: ['1.8.2', '2.0'], description: 'versão do Fluig: escolhe o Studio do importador e do ECM30 regenerado' },
+      projeto: str('caminho absoluto da raiz do projeto Fluig (pasta que tem ou terá workflow/); sem ele nada é gravado'),
+      sobrescrever: { type: 'boolean', description: 'permite trocar .process, scripts e literais locais diferentes do servidor (os atuais vão para workflow/.resources/.backups)' },
+      incluirConteudo: { type: 'boolean', description: 'devolve o conteúdo dos arquivos (padrão: true sem projeto, false com projeto)' },
+    }, ['processId', 'versaoAlvo']),
+    handler: async (args) => flowImport(client, args),
+  },
+  {
     name: 'fluig_flow_deploy',
     description: '⚠️ ESCRITA ESTRUTURAL. Publica uma versão do processo pelo SOAP oficial (deployProcess: createWorkFlowProcessVersion → importProcess → releaseProcess), com o ECM30 e o SVG do desenho. Entrada: exatamente uma de spec (gera o .process num temporário) ou processo (caminho de <projeto>/workflow/diagrams/<x>.process, regenerado antes). Exige confirm=true. Recusa env="prod" nesta versão, versaoAlvo maior que a versão do servidor, spec com erro e papel/campo não conferido. Sem conversor oficial instalado usa o plano B e avisa (W_ECM30_NAO_OFICIAL). Use fluig_flow_validate antes.',
     inputSchema: S({
@@ -1236,14 +1249,15 @@ Uso:
   fluig-mcp --help      Mostra esta mensagem.
   fluig-mcp regenerar <arquivo.process> [1.8.2|2.0]   Regenera o ECM30 e o SVG de um .process (sem credencial).
   fluig-mcp gerar <spec.json> --projeto <pasta> [1.8.2|2.0]   Gera .process + ECM30 + SVG de uma spec v1 (sem credencial).
-  fluig-mcp instalar-conversor --de <pasta plugins | zip> | --baixar 1.8.2.0   Instala o conversor do Studio no cache local.
+  fluig-mcp instalar-conversor --de <pasta plugins | zip> | --baixar 1.8.2.0   Instala o conversor e o importador do Studio no cache local.
+  fluig-mcp importar <arquivo.ecm30.xml> --projeto <pasta> [1.8.2|2.0]   Monta o .process de um ECM30 como o Studio, sem renumerar (sem credencial).
 
 Ambiente (nenhum tem default — veja .env.example):
   Homologação:  FLUIG_HOST       FLUIG_USER       FLUIG_PASS
   Produção:     FLUIG_HOST_PROD  FLUIG_USER_PROD  FLUIG_PASS_PROD
 
   FLUIG_READONLY=1  expõe SOMENTE as ferramentas que não alteram o servidor. Só trata o servidor:
-                    fluig_flow_generate e fluig_flow_regenerate continuam visíveis e gravam em disco
+                    fluig_flow_generate, fluig_flow_regenerate e fluig_flow_import continuam visíveis e gravam em disco
                     apenas com caminho explícito (projeto/processo), sem sobrescrever sem pedir.
 
 Toda chamada exige o parâmetro env ("teste" ou "prod"). Não há default: é o que impede
@@ -1268,7 +1282,7 @@ if (process.argv.includes('--list')) {
   process.exit(0);
 }
 
-if (['regenerar', 'gerar', 'instalar-conversor'].includes(process.argv[2])) {
+if (['regenerar', 'gerar', 'instalar-conversor', 'importar'].includes(process.argv[2])) {
   // Subcomandos locais do gerador de fluxo: não precisam de credencial nem sobem o servidor MCP.
   const { executarCli } = await import('./src/flow/cli-fluxo.js');
   process.exit(await executarCli(process.argv.slice(2)));

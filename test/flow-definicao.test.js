@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { lerDefinicao, aplicarDefinicao } from '../src/flow/definicao.js';
+import { lerDefinicao, aplicarDefinicao, aplicarSlots, lerSlots } from '../src/flow/definicao.js';
 
 const fixture = (nome) => readFileSync(new URL(`./fixtures/flow/${nome}.ecm30.xml`, import.meta.url), 'utf8');
 
@@ -88,4 +88,39 @@ test('aplicarDefinicao: round-trip e erro sem ProcessDefinition', () => {
   const d = { ...DEF, processCategoryId: 'abc', icon: 'ico' };
   assert.deepEqual(lerDefinicao(aplicarDefinicao(BASE, d, { versaoAlvo: '2.0' })), d);
   assert.throws(() => aplicarDefinicao('<list><a/></list>', DEF, { versaoAlvo: '2.0' }), /ProcessDefinition/);
+});
+
+const campo = (id, slot) =>
+  `    <ProcessFormField>\n      <processFormFieldPK>\n        <companyId>1</companyId>\n        <processId>p</processId>\n        <fieldId>${id}</fieldId>\n      </processFormFieldPK>\n      <fieldDescription>${id}</fieldDescription>\n      <slotId>${slot}</slotId>\n    </ProcessFormField>\n`;
+const comCampos = (pares) => `<list>\n  <ProcessDefinition>\n  </ProcessDefinition>\n  <list>\n${pares.map(([i, s]) => campo(i, s)).join('')}  </list>\n</list>\n`;
+
+test('lerSlots: fieldId → slotId; ECM30 sem campos descritores → vazio', () => {
+  assert.deepEqual([...lerSlots(comCampos([['date0', 2], ['number16', 1]]))], [['date0', '2'], ['number16', '1']]);
+  assert.equal(lerSlots('<list><ProcessDefinition></ProcessDefinition></list>').size, 0);
+});
+
+test('aplicarSlots: mesmos campos com slots trocados → reaplica os do servidor e o resto fica igual', () => {
+  const servidor = comCampos([['date0', 2], ['number16', 1], ['zoomfield1', 4], ['zoomfield2', 3]]);
+  const novo = comCampos([['date0', 1], ['number16', 2], ['zoomfield1', 3], ['zoomfield2', 4]]);
+  const r = aplicarSlots(novo, servidor);
+  assert.equal(r.aplicado, true);
+  assert.equal(r.xml, servidor);
+  assert.equal(aplicarSlots(servidor, servidor).aplicado, false, 'já iguais: nada a fazer');
+});
+
+test('aplicarSlots: mesmos campos em outra ordem (reordenados no editor) → vale a numeração nova', () => {
+  const servidor = comCampos([['date0', 2], ['number16', 1]]);
+  const reordenado = comCampos([['number16', 1], ['date0', 2]]);
+  assert.deepEqual(aplicarSlots(reordenado, servidor), { xml: reordenado, aplicado: false, motivo: 'os campos descritores foram reordenados' });
+});
+
+test('aplicarSlots: campos diferentes ou ausentes → não mexe', () => {
+  const servidor = comCampos([['date0', 2], ['number16', 1]]);
+  const outro = comCampos([['date0', 1], ['texto9', 2]]);
+  assert.deepEqual(aplicarSlots(outro, servidor), { xml: outro, aplicado: false, motivo: 'os campos descritores mudaram' });
+  const mais = comCampos([['date0', 1], ['number16', 2], ['texto9', 3]]);
+  assert.equal(aplicarSlots(mais, servidor).aplicado, false);
+  const vazio = '<list><ProcessDefinition></ProcessDefinition></list>';
+  assert.deepEqual(aplicarSlots(vazio, vazio), { xml: vazio, aplicado: false, motivo: 'sem campos descritores' });
+  assert.equal(aplicarSlots(vazio, servidor).aplicado, false);
 });

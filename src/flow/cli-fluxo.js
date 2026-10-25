@@ -1,22 +1,25 @@
 /**
- * Subcomandos locais do `fluig-mcp` (passos 5.2 e 5.3): `regenerar`, `gerar` e `instalar-conversor`.
+ * Subcomandos locais do `fluig-mcp` (passos 5.2 e 5.3 e importador): `regenerar`, `gerar`, `instalar-conversor` e `importar`.
  *   fluig-mcp regenerar <arquivo.process> [1.8.2|2.0] [--proprio | --oficial] [--nao-gravar] [--cache <pasta>] [--java <caminho>]
  *   fluig-mcp gerar <spec.json> --projeto <pasta> [1.8.2|2.0] [--sobrescrever] [--oficial | --proprio] [--cache <pasta>] [--java <caminho>]
- *   fluig-mcp instalar-conversor --de <pasta plugins | raiz do Eclipse | studio.zip> [--versao 1.8.2.0|2.0.0.2|todas] [--cache <pasta>] [--forcar]
- *   fluig-mcp instalar-conversor --baixar 1.8.2.0 [--cache <pasta>] [--forcar]
+ *   fluig-mcp instalar-conversor --de <pasta plugins | raiz do Eclipse | studio.zip> [--versao 1.8.2.0|2.0.0.2|todas] [--cache <pasta>] [--forcar] [--sem-importador]
+ *   fluig-mcp instalar-conversor --baixar 1.8.2.0 [--cache <pasta>] [--forcar] [--sem-importador]
+ *   fluig-mcp importar <arquivo.ecm30.xml> --projeto <pasta> [1.8.2|2.0] [--sobrescrever] [--servidor <nome>] [--cache <pasta>] [--java-importador <caminho>] [--java <caminho>]
  * `executarCli` devolve o código de saída: 0 ok, 1 erro de execução (ErroFluxo), 2 uso errado.
  */
 import { ErroFluxo, regenerar } from './regenerar.js';
 import { instalarConversor } from './conversor.js';
 import { gerarArtefatos } from './artefatos.js';
+import { importarEcm30 } from './importar.js';
 import { readFile } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 
 const USO = `Uso:
   fluig-mcp regenerar <arquivo.process> [1.8.2|2.0] [--proprio | --oficial] [--nao-gravar] [--cache <pasta>] [--java <caminho>]
   fluig-mcp gerar <spec.json> --projeto <pasta> [1.8.2|2.0] [--sobrescrever] [--oficial | --proprio] [--cache <pasta>] [--java <caminho>]
-  fluig-mcp instalar-conversor --de <pasta plugins | raiz do Eclipse | studio.zip> [--versao 1.8.2.0|2.0.0.2|todas] [--cache <pasta>] [--forcar]
-  fluig-mcp instalar-conversor --baixar 1.8.2.0 [--cache <pasta>] [--forcar]`;
+  fluig-mcp instalar-conversor --de <pasta plugins | raiz do Eclipse | studio.zip> [--versao 1.8.2.0|2.0.0.2|todas] [--cache <pasta>] [--forcar] [--sem-importador]
+  fluig-mcp instalar-conversor --baixar 1.8.2.0 [--cache <pasta>] [--forcar] [--sem-importador]
+  fluig-mcp importar <arquivo.ecm30.xml> --projeto <pasta> [1.8.2|2.0] [--sobrescrever] [--servidor <nome>] [--cache <pasta>] [--java-importador <caminho>] [--java <caminho>]`;
 
 class UsoErrado extends Error {}
 
@@ -109,7 +112,7 @@ export async function executarCli(argv, { saida = console.log, erro = console.er
       return 0;
     }
     if (comando === 'instalar-conversor') {
-      const { pos, op } = analisar(resto, ['--de', '--versao', '--baixar', '--cache'], ['--forcar']);
+      const { pos, op } = analisar(resto, ['--de', '--versao', '--baixar', '--cache'], ['--forcar', '--sem-importador']);
       if (pos.length) throw new UsoErrado(`Argumento inesperado: ${pos[0]}.`);
       if (!op['--de'] && !op['--baixar']) throw new UsoErrado('Informe --de <pasta plugins | zip> ou --baixar <versão>.');
       if (op['--de'] && op['--baixar']) throw new UsoErrado('Use --de ou --baixar, não os dois.');
@@ -119,6 +122,7 @@ export async function executarCli(argv, { saida = console.log, erro = console.er
         baixar: op['--baixar'] || false,
         cache: op['--cache'],
         forcar: !!op['--forcar'],
+        importador: !op['--sem-importador'],
         log: saida,
       });
       for (const i of Array.isArray(r) ? r : [r]) {
@@ -127,7 +131,42 @@ export async function executarCli(argv, { saida = console.log, erro = console.er
             ? `Studio ${i.versaoStudio}: já instalado e conferido em ${i.dir} (use --forcar para reinstalar).`
             : `Studio ${i.versaoStudio}: instalado em ${i.dir} (${i.arquivos} arquivos, ${MB(i.bytes)}).`
         );
+        const imp = i.importador;
+        if (!imp) continue;
+        if (!imp.instalado) saida(`aviso W_IMPORTADOR_NAO_INSTALADO: importador do Studio ${i.versaoStudio} não instalado (${imp.codigo}): ${imp.motivo}`);
+        else if (imp.jaInstalado) saida(`Importador ${i.versaoStudio}: já instalado e conferido em ${imp.dir}.`);
+        else saida(`Importador ${i.versaoStudio}: instalado em ${imp.dir} (${imp.arquivos} arquivos, ${MB(imp.bytes)}).`);
       }
+      return 0;
+    }
+    if (comando === 'importar') {
+      const { pos, op } = analisar(resto, ['--projeto', '--servidor', '--cache', '--java-importador', '--java'], ['--sobrescrever']);
+      if (pos.length < 1 || pos.length > 2) throw new UsoErrado('Informe o arquivo .ecm30.xml e, se quiser, a versão (1.8.2 ou 2.0).');
+      if (!op['--projeto']) throw new UsoErrado('Informe --projeto <pasta> (raiz do projeto Fluig, onde fica workflow/).');
+      let xml;
+      try {
+        xml = await readFile(pos[0], 'utf8');
+      } catch (e) {
+        throw new ErroFluxo('E_ECM30_INVALIDO', `Não foi possível ler ${pos[0]}: ${e && e.message}`);
+      }
+      const r = await importarEcm30(xml, {
+        versaoAlvo: pos[1] || '1.8.2',
+        projeto: isAbsolute(op['--projeto']) ? op['--projeto'] : resolve(op['--projeto']),
+        sobrescrever: !!op['--sobrescrever'],
+        servidor: op['--servidor'] || 'fluig-mcp',
+        cache: op['--cache'],
+        javaImportador: op['--java-importador'],
+        java: op['--java'],
+      });
+      const estado = (alterado) => (alterado ? 'gravado' : 'sem mudança');
+      saida(`importador: Studio ${r.versaoStudio} (Java ${r.java.major} ${r.java.arquitetura})`);
+      saida(`process: ${r.process.caminho} (${r.process.bytes} bytes, ${estado(r.process.alterado)})`);
+      if (r.process.backup) saida(`backup: ${r.process.backup}`);
+      for (const s of [...r.scripts, ...r.literais]) saida(`${s.acao}: ${s.arquivo}${s.backup ? ` (backup ${s.backup})` : ''}`);
+      saida(`ecm30: ${r.ecm30.caminho} (${r.ecm30.bytes} bytes, ${estado(r.ecm30.alterado)})`);
+      saida(`svg: ${r.svg.caminho} (${r.svg.bytes} bytes, ${estado(r.svg.alterado)})`);
+      saida(`ids: ${Object.keys(r.ids.atividades).length} atividades e ${Object.keys(r.ids.ligacoes).length} ligações com o número do servidor`);
+      for (const a of r.avisos) saida(`aviso ${a.codigo}: ${a.mensagem}`);
       return 0;
     }
     throw new UsoErrado(`Subcomando desconhecido: ${comando || '(nenhum)'}.`);

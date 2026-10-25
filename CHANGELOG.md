@@ -7,6 +7,16 @@ versionamento [SemVer](https://semver.org/lang/pt-BR/).
 
 ### Adicionado
 
+- `fluig_flow_import` e `fluig-mcp importar`: importam um processo do servidor como o "importar processo"
+  do Fluig Studio, pela ponte Java `src/flow/ponte-importador/` e o importador do próprio Studio. O
+  `.process` sai com os ids iguais aos números do servidor (a importação pela Fluiggers renumerava), com
+  raias, scripts de evento e literais. Antes de gravar, é conferido pela Fluiggers e o ECM30 que o
+  conversor oficial gera dele precisa ter os mesmos números de atividades e ligações do servidor.
+  Exige Java 8+ x64 (no Mac com chip Apple, sob Rosetta); macOS e Windows.
+- `instalar-conversor` instala também o importador do Studio (17 JARs, `~/.fluig-mcp/importador/<versão>`,
+  conferidos por SHA-256); `--sem-importador` pula.
+- `fluig_flow_deploy` com `novo=false` reaplica o `slotId` dos campos descritores do servidor, que o
+  conversor do Studio renumerava (`W_SLOTS_DO_SERVIDOR`).
 - Gerador de fluxo: serviço automatizado exige `tratamentoErro` (id da atividade humana que trata o erro); a captura de erro sai ligada à atividade de tratamento no ECM30 e no `.process`, e os leitores reconhecem essa ligação em vez de tratá-la como fora da v1.
 - Cópia fixa de parte da extensão Fluiggers 3.0.1 (MIT) em `vendor/fluiggers-3.0.1/` e carregador
   `src/flow/fluiggers.js`, base para gerar e regenerar `.process`/SVG sem VS Code.

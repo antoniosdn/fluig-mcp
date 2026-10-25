@@ -195,14 +195,15 @@ Para reportar vulnerabilidade, veja [SECURITY.md](SECURITY.md).
 (padrão `/ascendra_log_viewer/api/logs`; outra base em `FLUIG_LOG_API`) e devolve o resultado
 resumido: linhas cortadas, repetidas agrupadas e total limitado a cerca de 30 mil caracteres.
 
-**Gerador de fluxo** (5)
-`fluig_flow_validate` · `fluig_flow_generate` · `fluig_flow_regenerate` · `fluig_flow_read` · **!** `fluig_flow_deploy`
+**Gerador de fluxo** (6)
+`fluig_flow_validate` · `fluig_flow_generate` · `fluig_flow_regenerate` · `fluig_flow_read` · `fluig_flow_import` · **!** `fluig_flow_deploy`
 
 Geram o processo a partir de uma spec JSON (v1; formato no comentário de `src/flow/spec.js`), para
 as versões alvo `1.8.2` e `2.0`. `validate` confere a spec e, no servidor (só leitura), papéis,
 campos do formulário e versão do Fluig; `generate` devolve `.process` + ECM30 + SVG (veja abaixo);
 `regenerate` refaz ECM30 e SVG de um `.process` editado; `read` exporta um processo existente como
-spec, com `origem` para gerar de novo sem renumerar; `deploy` publica uma versão com o SVG, a partir
+spec, com `origem` para gerar de novo sem renumerar; `import` monta o `.process` de um processo do
+servidor como o Studio, sem renumerar (veja abaixo); `deploy` publica uma versão com o SVG, a partir
 de uma `spec` ou de um `.process` (`processo`). Fora da v1: subprocesso, eventos de mensagem e sinal,
 timer e atribuição fora de papel.
 
@@ -224,6 +225,9 @@ fluig-mcp regenerar <arquivo.process> [1.8.2|2.0] [--proprio | --oficial] [--nao
   - `fluig-mcp instalar-conversor --de <pasta plugins do Studio>` (aceita a raiz do Eclipse);
   - `fluig-mcp instalar-conversor --de <studio.zip>`;
   - `fluig-mcp instalar-conversor --baixar 1.8.2.0` (baixa os 13 JARs; só aceita arquivo cujo tamanho e SHA-256 batam com a tabela).
+
+  O mesmo comando instala junto o importador do Studio (veja "Importar processo do servidor");
+  `--sem-importador` pula essa parte.
 - **Licença:** os JARs são da TOTVS e da Eclipse Foundation (EPL) e ficam só na sua máquina; este
   repositório não os redistribui. O download com `--baixar` é feito por quem roda o comando, sob esses termos.
 - **Plano B:** sem conversor instalado (ou com `--proprio`), o ECM30 sai do gerador próprio, com o aviso
@@ -252,6 +256,56 @@ validador dela e relido contra a spec antes de gravar; ECM30 e SVG saem de `rege
 - Todo serviço automatizado exige `tratamentoErro`: o id de uma atividade **humana** que trata o erro. O
   gerador cria a captura de erro do serviço e a liga a essa atividade (a ligação não entra em `ligacoes`);
   sem saída na captura, o editor da extensão acusa "Elemento sem fluxo de saída".
+
+## Importar processo do servidor (como o Studio)
+
+Para fazer uma nova versão de um processo que já existe, o `.process` precisa manter o número de cada
+atividade e ligação do servidor: scripts (`WKNumState`), formulário e solicitações em andamento dependem
+dele. A importação pela extensão Fluiggers renumera (1, 2, 3…); o "importar processo" do Studio não, porque
+monta o id com o número do servidor (`task30`, `flow31`). `fluig_flow_import` usa o importador do próprio
+Studio, pela ponte Java de `src/flow/ponte-importador/`:
+
+```
+fluig-mcp importar <arquivo.ecm30.xml> --projeto <pasta> [1.8.2|2.0] [--sobrescrever] [--servidor <nome>] [--cache <pasta>] [--java-importador <caminho>]
+```
+
+Ou a ferramenta `fluig_flow_import` (`processId`, `version` opcional, `versaoAlvo`, `projeto`), que exporta
+o ECM30 do servidor (só leitura). O fluxo para nova versão fica: `fluig_flow_import` → editar o `.process`
+→ `fluig_flow_deploy` com `processo` e `novo=false`.
+
+- **O que sai:** `workflow/diagrams/<id>.process` (com raias, atribuições e fluxos que a spec v1 não cobre),
+  os scripts de evento em `workflow/scripts`, os literais e o ECM30 + SVG em `.resources` (pelo `regenerar`).
+- **Portões antes de gravar:** a Fluiggers valida o `.process` sem erro; todo número de atividade e de
+  ligação do ECM30 aparece num id (menos o par de eventos de link "envia" → "recebe", que o Studio guarda
+  no evento e não como fluxo); e o ECM30 que o conversor oficial gera desse `.process` tem exatamente os
+  números do servidor. Qualquer diferença dá `E_IMPORTADOR_IDS`, sem gravar nada. Processo sem nenhuma
+  atividade no servidor dá `E_IMPORTADOR_VAZIO`.
+- **Conferido em 195 processos reais** (projeto de um cliente, só localmente): 183 importam com todos os
+  números iguais aos do servidor; os 12 restantes não têm atividade.
+- **Sem sobrescrever:** `.process`, scripts e literais locais diferentes do servidor são mantidos (o
+  `.process` diferente recusa com `E_PROCESS_EXISTE`; script diferente avisa com `W_SCRIPT_LOCAL_DIFERENTE`).
+  Com `sobrescrever`, o atual vai para `workflow/.resources/.backups/`.
+- **Requisitos:**
+  - conversor **e** importador da mesma versão do Studio no cache (`fluig-mcp instalar-conversor`): mais 17
+    JARs (13,4 MB) em `~/.fluig-mcp/importador/<versão>/`, conferidos por SHA-256 a cada execução. O 1.8.2.0
+    baixa; o 2.0.0.2 só por `--de`, e o que faltar na fonte (o SWT do Mac num Studio 2.0 de Windows, por
+    exemplo) vem do importador 1.8.2.0 já instalado, que tem os mesmos JARs do Eclipse;
+  - **Java 8 ou superior x64** (`FLUIG_MCP_JAVA_IMPORTADOR`; no macOS o comando procura sozinho com
+    `/usr/libexec/java_home -a x86_64`). O desenho do Studio mede o texto pelo SWT, que no Eclipse Neon só
+    existe para x86_64: no Mac com chip Apple esse Java roda sob Rosetta;
+  - macOS ou Windows. Linux ainda não (`E_IMPORTADOR_PLATAFORMA`).
+- **O que ainda difere do servidor** (comparando o ECM30 regenerado com o publicado):
+  - o Studio 1.8.2.0 não conhece `icon`, `processCategoryId`, `formIdV2` e `managedScript`; o 2.0.0.2 só não
+    conhece `managedScript`. O aviso `W_IMPORTADOR_ITENS_DESCONHECIDOS` lista o que ficou de fora. Na
+    publicação com `versaoAlvo` 2.0, ícone e categoria voltam do servidor;
+  - o `.process` só guarda a ordem dos campos descritores, e o conversor os numera por ela (1, 2, 3…): o
+    `fluig_flow_deploy` com `novo=false` reaplica o `slotId` do servidor quando os campos e a ordem são os
+    mesmos (`W_SLOTS_DO_SERVIDOR`); se você reordenou no editor, vale a numeração nova (`W_SLOTS_REORDENADOS`).
+- **Teste com o Studio de verdade:** `FLUIG_DEMO_IMPORTADOR=1 node --test test/flow-importar-demo.test.js`
+  (fora disso, o `npm test` não roda Java).
+- **Ponte:** fonte e `.class` versionados, com SHA-256 conferido antes de cada execução. Para recompilar:
+  `node scripts/compilar-ponte-importador.mjs [--javac <caminho>]` (exige JDK e o importador 1.8.2.0 no cache)
+  e copie os hashes impressos para `HASHES_PONTE_IMPORTADOR` em `src/flow/importar.js`.
 
 ## Armadilhas conhecidas do Fluig
 

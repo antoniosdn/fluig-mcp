@@ -252,10 +252,19 @@ export async function regenerar(caminhoProcess, opcoes = {}) {
   }
   const svgBuf = Buffer.from(svgTexto, 'utf8');
 
+  const { ecm30, svg } = await gravarRecursos(dirRecursos, nomeBase, ecm30Buf, svgBuf, { gravar, agora });
+  return { processo: abs, conversor: infoConversor, ecm30, svg, avisos };
+}
+
+/**
+ * Grava <dirRecursos>/<nomeBase>.ecm30.xml e .processimage.svg: só o que mudou, com backup do ECM30
+ * anterior em .backups/. Com gravar=false só devolve a descrição. Usado por regenerar e importar.
+ */
+export async function gravarRecursos(dirRecursos, nomeBase, ecm30Buf, svgBuf, { gravar = true, agora = () => new Date() } = {}) {
   const caminhoEcm = join(dirRecursos, `${nomeBase}.ecm30.xml`);
   const caminhoSvg = join(dirRecursos, `${nomeBase}.processimage.svg`);
   const ecm30 = { caminho: caminhoEcm, conteudo: ecm30Buf.toString('utf8'), bytes: ecm30Buf.length, alterado: false, backup: null };
-  const svg = { caminho: caminhoSvg, conteudo: svgTexto, bytes: svgBuf.length, alterado: false };
+  const svg = { caminho: caminhoSvg, conteudo: svgBuf.toString('utf8'), bytes: svgBuf.length, alterado: false };
 
   if (gravar) {
     await mkdir(dirRecursos, { recursive: true });
@@ -278,6 +287,5 @@ export async function regenerar(caminhoProcess, opcoes = {}) {
       svg.alterado = true;
     }
   }
-
-  return { processo: abs, conversor: infoConversor, ecm30, svg, avisos };
+  return { ecm30, svg };
 }

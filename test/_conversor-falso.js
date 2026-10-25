@@ -40,3 +40,41 @@ export function pastaPlugins(raiz, { raizEclipse = false } = {}) {
   for (const [n, b] of Object.entries(ARQUIVOS)) writeFileSync(join(dir, n), b);
   return dir;
 }
+
+// ---------------------------------------------------------------- importador do Studio (falso)
+
+export const ARQUIVOS_IMPORTADOR = {
+  'com.totvs.tds.ecm.designer.gui_9.9.9.9.jar': Buffer.from('gui falso'),
+  'org.eclipse.graphiti_9.9.jar': Buffer.from('graphiti falso'),
+};
+export const SWT_FALSO = {
+  darwin: ['org.eclipse.swt.cocoa_9.9.jar', Buffer.from('swt cocoa falso')],
+  win32: ['org.eclipse.swt.win32_9.9.jar', Buffer.from('swt win32 falso')],
+};
+
+const itemImp = (nome, buf, comUrl) => ({
+  nome,
+  bytes: buf.length,
+  sha256: sha(buf),
+  origem: nome.startsWith('com.totvs') ? 'totvs' : 'eclipse',
+  ...(comUrl ? { url: `https://exemplo.invalido/plugins/${nome}` } : {}),
+});
+
+/** Tabela no formato de IMPORTADORES, com as mesmas versões falsas de tabelaFalsa (9.9.9.9 com URL, 8.8.8.8 sem). */
+export function tabelaImportadorFalsa() {
+  const def = (comUrl) => ({
+    jars: Object.entries(ARQUIVOS_IMPORTADOR).map(([n, b]) => itemImp(n, b, comUrl)),
+    swt: Object.fromEntries(Object.entries(SWT_FALSO).map(([p, [n, b]]) => [p, itemImp(n, b, comUrl)])),
+  });
+  return { '9.9.9.9': def(true), '8.8.8.8': def(false) };
+}
+
+/** Todos os arquivos do importador falso (JARs + os dois SWT), por nome. */
+export const TODOS_IMPORTADOR = { ...ARQUIVOS_IMPORTADOR, ...Object.fromEntries(Object.values(SWT_FALSO)) };
+
+/** Grava os JARs falsos do importador (e os dois SWT) numa pasta. `sem` lista nomes a omitir. */
+export function pastaImportador(dir, { sem = [] } = {}) {
+  mkdirSync(dir, { recursive: true });
+  for (const [n, b] of Object.entries(TODOS_IMPORTADOR)) if (!sem.includes(n)) writeFileSync(join(dir, n), b);
+  return dir;
+}

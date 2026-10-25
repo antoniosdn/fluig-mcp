@@ -1,4 +1,4 @@
-// Subcomandos do fluig-mcp: regenerar, gerar e instalar-conversor (src/flow/cli-fluxo.js). Offline.
+// Subcomandos do fluig-mcp: regenerar, gerar, instalar-conversor e importar (src/flow/cli-fluxo.js). Offline.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
@@ -28,6 +28,12 @@ test('uso errado → 2', async () => {
     ['instalar-conversor'],
     ['instalar-conversor', '--de', 'x', '--baixar', '1.8.2.0'],
     ['instalar-conversor', 'solto'],
+    ['instalar-conversor', '--de', 'x', '--sem-importador', 'solto'],
+    ['importar'],
+    ['importar', 'a.ecm30.xml'],
+    ['importar', 'a.ecm30.xml', '1.8.2', 'sobra', '--projeto', '/tmp/x'],
+    ['importar', 'a.ecm30.xml', '--projeto'],
+    ['importar', 'a.ecm30.xml', '--projeto', '/tmp/x', '--desconhecida'],
     ['outro'],
   ]) {
     const c = captura();
@@ -126,5 +132,40 @@ test('gerar <spec> --projeto <tmp> --proprio --cache <vazio> → 0 e três camin
   } finally {
     rmSync(raiz, { recursive: true, force: true });
     rmSync(cache, { recursive: true, force: true });
+  }
+});
+
+test('importar: ECM30 ilegível → 1; sem importador no cache → 1 com a dica do instalar-conversor', async () => {
+  const raiz = tmp();
+  const cache = tmp();
+  try {
+    const c = captura();
+    assert.equal(await executarCli(['importar', join(raiz, 'nao-existe.xml'), '--projeto', raiz, '--cache', cache], c.opcoes), 1);
+    assert.ok(c.err.some((l) => l.startsWith('erro E_ECM30_INVALIDO:')));
+    const xml = join(raiz, 'p.ecm30.xml');
+    writeFileSync(xml, '<list>\n  <ProcessDefinition>\n    <processDefinitionPK>\n      <processId>proc_x</processId>\n    </processDefinitionPK>\n  </ProcessDefinition>\n</list>\n');
+    const d = captura();
+    assert.equal(await executarCli(['importar', xml, '--projeto', raiz, '--cache', cache], d.opcoes), 1);
+    assert.ok(d.err.some((l) => l.startsWith('erro E_IMPORTADOR_AUSENTE:') && l.includes('instalar-conversor')));
+    assert.ok(!existsSync(join(raiz, 'workflow')));
+  } finally {
+    rmSync(raiz, { recursive: true, force: true });
+    rmSync(cache, { recursive: true, force: true });
+  }
+});
+
+test('instalar-conversor --sem-importador: aceita a opção e não cria importador/', async () => {
+  const cache = tmp();
+  const fonte = tmp();
+  try {
+    pastaPlugins(fonte);
+    const c = captura();
+    // a fonte falsa não é de um Studio real: falha no conversor, mas a opção é aceita (não é erro de uso)
+    assert.equal(await executarCli(['instalar-conversor', '--de', fonte, '--cache', cache, '--sem-importador'], c.opcoes), 1);
+    assert.ok(!c.err.some((l) => l.startsWith('erro de uso:')));
+    assert.ok(!existsSync(join(cache, 'importador')));
+  } finally {
+    rmSync(cache, { recursive: true, force: true });
+    rmSync(fonte, { recursive: true, force: true });
   }
 });

@@ -12,8 +12,9 @@ import { gerarXmlProcesso } from './gerar.js';
 import { lerXmlProcesso } from './ler.js';
 import { gerarArtefatos, AVISOS_DO_PLANO_B_REDUNDANTES } from './artefatos.js';
 import { regenerar } from './regenerar.js';
+import { importarEcm30 } from './importar.js';
 import { readFile } from 'node:fs/promises';
-import { lerDefinicao, aplicarDefinicao } from './definicao.js';
+import { lerDefinicao, aplicarDefinicao, aplicarSlots } from './definicao.js';
 import { carregarFluiggers } from './fluiggers.js';
 
 const msg = (e) => (e && e.message ? e.message : String(e));
@@ -236,6 +237,60 @@ export async function flowRegenerate(client, args, internos = {}) {
   };
 }
 
+/**
+ * Importa um processo do servidor como o Studio faz (ids = números do servidor). Lê o ECM30 e grava só em
+ * disco local, com `projeto`; sem ele, devolve o conteúdo. Ganchos de teste só por `internos`.
+ */
+export async function flowImport(client, args, internos = {}) {
+  const { processId, version } = args;
+  if (!processId) throw new Error('Informe processId.');
+  const xml = await client.exportProcessXml(processId, version);
+  const i = internos || {};
+  const r = await importarEcm30(xml, {
+    processId,
+    versaoAlvo: args.versaoAlvo,
+    projeto: args.projeto,
+    sobrescrever: args.sobrescrever === true,
+    servidor: args.env || 'fluig-mcp',
+    cache: args.cache,
+    executar: i.executar,
+    java: i.java,
+    javaImportador: i.javaImportador,
+    plataforma: i.plataforma,
+    _tabela: i._tabela,
+    _tabelaImportador: i._tabelaImportador,
+    _dirPonte: i._dirPonte,
+    _dirPonteImportador: i._dirPonteImportador,
+    _hashesPonteImportador: i._hashesPonteImportador,
+  });
+  const incluir = args.incluirConteudo === true || !args.projeto;
+  const semConteudo = (s) => (incluir ? s : Object.fromEntries(Object.entries(s).filter(([k]) => k !== 'conteudo')));
+  const arquivo = (a) => {
+    const o = { caminho: a.caminho, bytes: a.bytes };
+    if ('alterado' in a) o.alterado = a.alterado;
+    if (a.backup) o.backup = a.backup;
+    if (incluir) o.conteudo = a.conteudo;
+    return o;
+  };
+  return {
+    ok: true,
+    processId,
+    version: version !== undefined && version !== null ? version : 'corrente',
+    versaoAlvo: args.versaoAlvo,
+    versaoStudio: r.versaoStudio,
+    ids: r.ids,
+    formId: r.formId,
+    process: arquivo(r.process),
+    scripts: r.scripts.map(semConteudo),
+    literais: r.literais.map(semConteudo),
+    ecm30: arquivo(r.ecm30),
+    svg: arquivo(r.svg),
+    conversor: r.conversor,
+    java: r.java,
+    avisos: r.avisos,
+  };
+}
+
 /** Exporta um processo e devolve a spec v1 equivalente. */
 export async function flowRead(client, args) {
   const { processId, version } = args;
@@ -335,12 +390,14 @@ export async function flowDeploy(client, args, internos = {}) {
   let processId;
   let info;
   let avisos;
+  let xmlServidor = null; // versão corrente no servidor, só para novo=false
   if (spec) {
     // processo existente: a definição geral (categoria, volume, expediente, instrução) é do servidor
     let geral;
     if (!args.novo) {
       try {
-        geral = lerDefinicao(await client.exportProcessXml(spec.processId));
+        xmlServidor = await client.exportProcessXml(spec.processId);
+        geral = lerDefinicao(xmlServidor);
       } catch (e) {
         return {
           publicado: false,
@@ -389,7 +446,8 @@ export async function flowDeploy(client, args, internos = {}) {
     if (!args.novo) {
       let doServidor;
       try {
-        doServidor = lerDefinicao(await client.exportProcessXml(processId));
+        xmlServidor = await client.exportProcessXml(processId);
+        doServidor = lerDefinicao(xmlServidor);
       } catch (e) {
         return { publicado: false, motivo: 'categoria do processo no servidor não conferida', erro: msg(e) };
       }
@@ -418,6 +476,17 @@ export async function flowDeploy(client, args, internos = {}) {
     }
     if (bloqueiam.length > 0) {
       return { publicado: false, motivo: 'papel ou campo não conferido no servidor', erros: conf.erros, avisos: [...avisos, ...conf.avisos] };
+    }
+  }
+
+  // o conversor numera os campos descritores na própria ordem: a versão nova mantém os slots do servidor
+  if (xmlServidor) {
+    const s = aplicarSlots(ecm30, xmlServidor);
+    if (s.aplicado) {
+      ecm30 = s.xml;
+      avisos.push({ codigo: 'W_SLOTS_DO_SERVIDOR', mensagem: 'O slotId dos campos descritores foi reaplicado da versão do servidor (o conversor tinha trocado a ordem).', caminho: 'processo' });
+    } else if (s.motivo === 'os campos descritores foram reordenados') {
+      avisos.push({ codigo: 'W_SLOTS_REORDENADOS', mensagem: 'Os campos descritores estão em outra ordem que a do servidor: vale a numeração nova (as colunas de consulta mudam de lugar).', caminho: 'processo' });
     }
   }
 
