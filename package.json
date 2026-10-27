@@ -1,10 +1,14 @@
 {
   "name": "fluig-mcp",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "Servidor MCP para o TOTVS Fluig — datasets, formulários, GED, eventos e processos BPM pela API, em homologação e produção, sem o Fluig Studio.",
   "type": "module",
   "license": "MIT",
   "author": "Rodrigo de Souza Faria (https://github.com/alucardigo)",
+  "contributors": [
+    "Antonio (https://github.com/antoniosdn)",
+    "Gian (https://github.com/kyso1)"
+  ],
   "homepage": "https://github.com/alucardigo/fluig-mcp#readme",
   "repository": {
     "type": "git",
@@ -29,15 +33,19 @@
     "soap",
     "headless"
   ],
-  "main": "./server.js",
+  "exports": {
+    "./package.json": "./package.json"
+  },
   "bin": {
-    "fluig-mcp": "./server.js",
-    "fluig-cli": "./bin/cli.js"
+    "fluig-mcp": "server.js",
+    "fluig-cli": "bin/cli.js"
   },
   "files": [
     "server.js",
+    "bin/",
     "src/",
     "vendor/",
+    "docs/",
     ".env.example",
     "README.md",
     "SECURITY.md",
@@ -48,15 +56,18 @@
   "engines": {
     "node": ">=20"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "start": "node server.js",
     "list": "node server.js --list",
     "test": "node --test",
-    "check": "node --check server.js && node --check src/client.js && node --check src/config.js && node --check src/logsearch.js && node --check src/flow/spec.js && node --check src/flow/validar.js && node --check src/flow/xml.js && node --check src/flow/ler.js && node --check src/flow/ecm30.js && node --check src/flow/gerar.js && node --check src/flow/comparar.js && node --check src/flow/ferramentas.js && node --check src/flow/fluiggers.js && node --check src/flow/erro.js && node --check src/flow/zip.js && node --check src/flow/conversor.js && node --check src/flow/java.js && node --check src/flow/process.js && node --check src/flow/regenerar.js && node --check src/flow/spec-process.js && node --check src/flow/definicao.js && node --check src/flow/artefatos.js && node --check src/flow/cli-fluxo.js && node --check src/flow/importar.js && node --check scripts/vendor-fluiggers.mjs && node --check scripts/compilar-ponte-importador.mjs && node --check vendor/fluiggers-3.0.1/modulos.cjs"
+    "check": "node --test test/sintaxe.test.js"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
-    "soap": "^1.9.3",
-    "undici": "^6.28.1"
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "soap": "^1.14.0",
+    "undici": "^6.29.1"
   }
 }

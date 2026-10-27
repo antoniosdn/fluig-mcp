@@ -5,7 +5,7 @@ import net from 'node:net';
 // mas instâncias DIFERENTES: passar um Agent do pacote para o fetch global dá
 // UND_ERR_INVALID_ARG, porque o dispatcher precisa ser da mesma cópia da undici.
 import { Agent, fetch } from 'undici';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { conferirDestino, gravarNaSaida, lerNaSaida } from './saida.js';
 
 /**
  * Cliente da API do TOTVS Fluig — headless (sem IDE). Replica o protocolo da
@@ -56,9 +56,16 @@ const SESSAO_REVALIDAR_MS = 20 * 60_000;
  *
  * Só uma PÁGINA HTML pode ser esse desvio. JSON, XML ou texto de dados nunca contam, mesmo
  * que tragam essas palavras no conteúdo — senão uma gravação bem-sucedida seria repetida.
+ *
+ * Exceção medida num Fluig sem Fluig Identity: as rotas antigas /ecm/api/rest/ecm/* (loadDataset,
+ * getEventList, createDataset, editDataset) sem sessão válida respondem **500** em JSON com o
+ * "UT010031: Login failed" do Undertow — as REST v2 respondem 401. O UT010031 sai da camada de
+ * autenticação, antes de a rota executar, então repetir a requisição depois do novo login é seguro.
+ * Só conta em status de erro: num 200 o texto pode ser dado de verdade.
  */
 export function sessaoExpirada(status, text = '', contentType = '') {
   if (status === 401) return true;
+  if (status >= 400 && /\bUT010031\b/.test(String(text || ''))) return true;
   const corpo = String(text || '').trimStart();
   const ehHtml = /text\/html/i.test(contentType || '')
     || /^<(!doctype\s+html|html|head|body|form)\b/i.test(corpo);
@@ -118,6 +125,9 @@ export class FluigClient {
     this.pass = cfg.pass;
     this.companyId = cfg.companyId;
     this.userCode = cfg.userCode || cfg.user;
+    this._varUserCode = cfg.isProd ? 'FLUIG_USERCODE_PROD' : 'FLUIG_USERCODE';
+    this._userCodeOrigem = cfg.userCode ? this._varUserCode : null; // null = ainda não descoberto
+    this._descobertaTimeoutMs = 15_000;
     this._cookie = null;
     this._cookieAt = 0; // quando o cookie foi confirmado válido pela última vez
     this._soap = {};
@@ -240,7 +250,13 @@ export class FluigClient {
    * desatualizada gastaria várias tentativas do AD de uma vez só.
    */
   async login() {
-    if (this._cookie && Date.now() - this._cookieAt < SESSAO_REVALIDAR_MS) return this._cookie;
+    if (this._cookie && Date.now() - this._cookieAt < SESSAO_REVALIDAR_MS) {
+      // Com a sessão já aberta, ainda espera a descoberta do código do colaborador: sem isso, uma chamada
+      // feita enquanto ela roda usaria o login como colleagueId/userId (inclusive em ferramentas de escrita).
+      await this._descoberta;
+      // Outra chamada pode ter descartado a sessão enquanto esperávamos: aí segue para o login único.
+      if (this._cookie) return this._cookie;
+    }
     if (!this._loginEmAndamento) {
       this._loginEmAndamento = this._obterSessao().finally(() => { this._loginEmAndamento = null; });
     }
@@ -251,7 +267,7 @@ export class FluigClient {
     if (this._cookie) {
       // Parado tempo suficiente para ter expirado no servidor: confirma antes de reaproveitar.
       const visto = this._cookie;
-      if (await this._sessaoViva(visto)) {
+      if ((await this._sessaoViva(visto)) !== false) {
         if (this._cookie === visto) this._cookieAt = Date.now();
         return this._cookie || visto;
       }
@@ -264,14 +280,26 @@ export class FluigClient {
       throw new Error(
         `Sem senha configurada para ${this.host} — não vou tentar o login (cada tentativa ` +
         'queima uma das 3 chances antes do AD bloquear a conta). Para PRODUÇÃO defina ' +
-        'FLUIG_PASS_PROD no registro do MCP; para homologação, FLUIG_PASS.'
+        'FLUIG_PASS_PROD (ou FLUIG_PASS_CMD_PROD) no registro do MCP; para homologação, ' +
+        'FLUIG_PASS (ou FLUIG_PASS_CMD).'
+      );
+    }
+    // O servidor já recusou esta credencial: cada chamada de ferramenta que viesse depois tentaria o
+    // login de novo, e três chamadas bastam para bloquear a conta. A senha só muda reiniciando o
+    // servidor MCP (a configuração é lida uma vez); fluig_session_reset libera UMA nova tentativa.
+    if (this._loginRecusado) {
+      throw new Error(
+        `Login bloqueado nesta sessão do MCP: o servidor já recusou a credencial de ${this.user} em `
+        + `${this.host}. Não vou tentar de novo (cada tentativa gasta uma das chances antes de o AD `
+        + 'bloquear a conta). Corrija a senha e reinicie o servidor MCP, ou rode fluig_session_reset '
+        + 'para forçar uma nova tentativa.',
       );
     }
     // Mesmo bloqueio intermitente do IPS/Fortinet visto em _rest() (ver ali) também acerta o
     // login.do em si — um 403 aqui não significa credencial errada, então re-sonda o IP e
     // tenta de novo antes de reportar falha de autenticação (evita alarme falso).
     // ⚠️ NUNCA repetir tentativa quando o servidor RESPONDEU e apenas rejeitou a credencial.
-    // Em 22/08/2026 este laço de 3 tentativas BLOQUEOU a conta AD do do usuário
+    // Em 22/08/2026 este laço de 3 tentativas BLOQUEOU a conta AD do usuário
     // (lockoutThreshold do domínio = 3) porque a senha de PROD estava desatualizada.
     // Só re-tentar quando a resposta indica bloqueio de rede/IPS (403/5xx/sem resposta),
     // que é o cenário original para o qual o retry foi criado.
@@ -288,16 +316,20 @@ export class FluigClient {
       this._cookie = setCookies.map(c => c.split(';')[0]).join('; ');
       if (/JSESSIONIDSSO|jwt\.token/.test(this._cookie)) {
         this._cookieAt = Date.now();
-        return this._cookie;
+        const aceito = this._cookie;
+        await this._descobrirUserCode(aceito);
+        return this._cookie || aceito;
       }
       this._cookie = null;
       // 200 sem cookie de SSO = o Fluig respondeu e RECUSOU a credencial. Abortar já:
       // insistir aqui queima tentativas do AD e bloqueia a conta do usuário.
       if (r.status === 200) {
+        this._loginRecusado = true;
         throw new Error(
           'Falha no login: o servidor respondeu 200 mas não emitiu JSESSIONIDSSO — credencial recusada. ' +
           'NÃO vou repetir (evita bloquear a conta no AD). Verifique a senha do ambiente ' +
-          `(FLUIG_PASS / FLUIG_PASS_PROD) antes de tentar de novo. host=${this.host} user=${this.user}`
+          '(FLUIG_PASS / FLUIG_PASS_PROD, ou o item do cofre lido por FLUIG_PASS_CMD / FLUIG_PASS_CMD_PROD) ' +
+          `antes de tentar de novo. host=${this.host} user=${this.user}`
         );
       }
       if (attempt < 2) this._bustIp();
@@ -319,18 +351,66 @@ export class FluigClient {
     this._soap = {};
   }
 
-  /** Pergunta ao servidor se `cookie` ainda abre sessão (sem seguir redirecionamento). */
+  /**
+   * Pergunta ao servidor se `cookie` ainda abre sessão (sem seguir redirecionamento).
+   * true = viva · false = o servidor respondeu e a sessão acabou · null = não deu para saber (rede,
+   * 5xx, bloqueio de IPS). "Não sei" não é "morta": derrubar a sessão por isso gastaria um login à toa,
+   * e a própria requisição seguinte detecta a sessão expirada se for o caso.
+   */
   async _sessaoViva(cookie) {
+    let r;
     try {
-      const r = await this._fetch('/portal/p/api/servlet/ping', {
+      r = await this._fetch('/portal/p/api/servlet/ping', {
         method: 'POST',
         headers: { Cookie: cookie },
         redirect: 'manual',
       });
-      return r.ok && (await r.text()).includes('pong');
     } catch {
-      return false;
+      return null;
     }
+    const text = await r.text().catch(() => '');
+    if (r.ok && text.includes('pong')) return true;
+    if (r.status >= 500 || /FortiGuard|Web Filter Violation|Web Page Blocked/i.test(text)) return null;
+    return false;
+  }
+
+  /**
+   * Código do colaborador (colleagueId/userId das rotas SOAP) a partir da sessão, quando
+   * FLUIG_USERCODE não foi definido. O código costuma ser a matrícula, não o login: com o login no
+   * lugar, getCardIndexesWithoutApprover devolve `result: null` e fluig_form_list sai vazio sem erro
+   * (medido no Fluig 1.7.1: 0 formulários com o login, 112 com o código).
+   * Usa user-info e não /api/public/2.0/users/getCurrent: a getCurrent devolve também password,
+   * tokenAccess e tokenSecret. Roda uma vez por processo (a promessa é compartilhada por chamadas
+   * simultâneas); falhar aqui não derruba o login.
+   */
+  _descobrirUserCode(cookie) {
+    this._descoberta ??= this._buscarUserCode(cookie);
+    return this._descoberta;
+  }
+
+  async _buscarUserCode(cookie) {
+    if (this._userCodeOrigem && this._userCodeOrigem !== 'login') return;
+    this._userCodeOrigem = 'login';
+    try {
+      // Com tempo limite: o login inteiro espera por isto, e um user-info pendurado travaria todas as
+      // ferramentas do ambiente.
+      const r = await withTimeout(this._fetch('/authentication/api/v1/login/user-info', {
+        headers: { Cookie: cookie, Accept: 'application/json' },
+      }), this._descobertaTimeoutMs);
+      const code = r.ok ? (await r.json())?.code : undefined;
+      if (code) {
+        this.userCode = String(code);
+        this._userCodeOrigem = 'sessão';
+        return;
+      }
+    } catch { /* cai no aviso abaixo */ }
+    // Falha transitória não vira permanente: o próximo login (sessão expirada, fluig_session_reset)
+    // tenta de novo. Até lá vale o login.
+    this._descoberta = null;
+    console.error(
+      `fluig-mcp: não consegui descobrir o código do colaborador pela sessão; usando o login (${this.user}). `
+      + `Se listas de formulário vierem vazias, defina ${this._varUserCode} com o código do colaborador.`
+    );
   }
 
   async ping() {
@@ -614,17 +694,19 @@ export class FluigClient {
 
   async saveGlobalEvent(eventId, code) {
     const list = await this.listGlobalEvents();
-    const arr = Array.isArray(list) ? list.slice() : [];
+    // A rota grava a LISTA INTEIRA: partir de [] quando a leitura falha apagaria os outros eventos.
+    if (!Array.isArray(list)) {
+      throw new Error(`saveGlobalEvent: não consegui ler a lista atual de eventos globais (HTTP ${list?._status ?? '?'}). `
+        + 'Nada foi gravado — gravar sem ela apagaria os outros eventos.');
+    }
+    const arr = list.slice();
     const dto = { globalEventPK: { companyId: this.companyId, eventId }, eventDescription: code };
     const idx = arr.findIndex(e => e.globalEventPK && e.globalEventPK.eventId === eventId);
     if (idx === -1) arr.push(dto); else arr[idx] = dto;
-    const cookie = await this.login();
-    const r = await this._fetch('/ecm/api/rest/ecm/globalevent/saveEventList', {
-      method: 'POST',
-      headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookie },
-      body: JSON.stringify(arr),
+    // Pelo _rest, para recuperar a sessão: sem ela esta rota antiga devolve 500 com UT010031.
+    return this._rest('/ecm/api/rest/ecm/globalevent/saveEventList', {
+      method: 'POST', form: true, body: JSON.stringify(arr),
     });
-    return r.json();
   }
 
   // ---------- Workflow (eventos de processo — requer FluiggersWidget) ----------
@@ -815,9 +897,17 @@ export class FluigClient {
     if (this.companyId != null && parseInt(this.companyId, 10) !== -1) {
       return { companyId: parseInt(this.companyId, 10), colleagueId: this.userCode || this.user };
     }
-    const j = await this._rest(`/portal/api/rest/wcmservice/rest/user/findUserByLogin/?username=${encodeURIComponent(this.user)}&password=${encodeURIComponent(this.pass)}&login=${encodeURIComponent(this.user)}`);
-    const c = j.content || j;
-    return { companyId: parseInt(c.tenantId, 10), colleagueId: String(c.userCode) };
+    // Antes ia por findUserByLogin?…&password=…: a senha na URL acaba em log de proxy e de servidor.
+    // user-info resolve o mesmo pela sessão (tenantId e code medidos no Fluig 1.7.1).
+    const u = await this._rest('/authentication/api/v1/login/user-info');
+    const companyId = parseInt(u?.tenantId, 10);
+    if (!Number.isInteger(companyId) || !u?.code) {
+      throw new Error(`resolveTenant: não consegui resolver o tenant pela sessão (user-info HTTP ${u?._status ?? 200}). `
+        + 'Defina FLUIG_COMPANY com o código da empresa em vez de -1.');
+    }
+    // FLUIG_USERCODE configurado continua valendo, como no caminho com companyId fixo.
+    const colleagueId = this._userCodeOrigem === this._varUserCode ? this.userCode : String(u.code);
+    return { companyId, colleagueId };
   }
 
   /**
@@ -1136,6 +1226,11 @@ export class FluigClient {
       headers.Cookie = await this.login();
       r = await this._fetch(path, { method, headers, body });
       text = await r.text();
+      // Quem chama olha só o status: um 200 com a página de SSO viraria "ok" numa ferramenta de escrita.
+      if (sessaoExpirada(r.status, text, r.headers.get('content-type'))) {
+        throw new Error(`${method} ${path.split('?')[0]}: sessão expirada mesmo depois de um novo login. `
+          + 'Nada foi confirmado pelo servidor. Rode fluig_session_reset e confira a credencial.');
+      }
     }
     return { status: r.status, text, contentType: r.headers.get('content-type') || '' };
   }
@@ -1399,8 +1494,12 @@ export class FluigClient {
 
   /** P0#1 — Descarta a sessão em memória e força novo login na próxima chamada. */
   async sessionReset() {
+    // Uma revalidação em andamento devolveria o cookie antigo a quem pediu o reset: espera ela acabar.
+    await this._loginEmAndamento?.catch(() => {});
     const antes = this._cookie ? this._cookie.split('; ').map(c => c.split('=')[0]) : [];
     this._descartarSessao();
+    this._loginRecusado = false; // liberação explícita de quem opera: UMA nova tentativa
+
     this._bustIp?.();
     const novo = await this.login();
     return {
@@ -1422,6 +1521,7 @@ export class FluigClient {
     return {
       ambiente: this.envName, isProd: this.isProd, host: this.host,
       cookies: nomes, temJwtToken: nomes.includes('jwt.token'), usuario,
+      colleagueId: this.userCode, colleagueIdOrigem: this._userCodeOrigem,
     };
   }
 
@@ -1478,26 +1578,58 @@ export class FluigClient {
 
   /** Baixa conteúdo BINÁRIO autenticado (anexo, stream do GED, diagrama). */
   async _restBinary(path, { accept } = {}) {
-    const cookie = await this.login();
-    const headers = { Cookie: cookie };
+    const headers = { Cookie: await this.login() };
     if (accept) headers.Accept = accept;
-    const r = await this._fetch(path, { method: 'GET', headers });
-    const buf = Buffer.from(await r.arrayBuffer());
-    return {
-      status: r.status, buffer: buf,
-      contentType: r.headers.get('content-type') || '',
-      contentDisposition: r.headers.get('content-disposition') || '',
-    };
+    for (let tentativa = 0; ; tentativa++) {
+      const r = await this._fetch(path, { method: 'GET', headers });
+      const buffer = Buffer.from(await r.arrayBuffer());
+      const contentType = r.headers.get('content-type') || '';
+      // Mesma regra do _rest(): sessão expirada → novo login e UMA repetição. Sem isso, a página de
+      // SSO seria gravada como se fosse o anexo. Só um erro ou uma página HTML é lido como texto.
+      if (tentativa === 0 && this._binarioDeSessaoExpirada(r.status, buffer, contentType)) {
+        this._descartarSessao(headers.Cookie);
+        headers.Cookie = await this.login();
+        continue;
+      }
+      return { status: r.status, buffer, contentType, contentDisposition: r.headers.get('content-disposition') || '' };
+    }
   }
 
-  /** Salva um binário baixado e devolve um resumo (nunca o conteúdo — estouraria o contexto). */
+  /** 2xx com a página de login/SSO não é sucesso: a escrita não aconteceu. */
+  _recusarPaginaDeSessao(r, texto, contexto) {
+    if (sessaoExpirada(r.status, texto, r.headers.get('content-type'))) {
+      this._descartarSessao();
+      throw new Error(`${contexto}: o servidor devolveu a página de login/SSO — a sessão expirou e NADA foi gravado. `
+        + 'Tente de novo (o próximo pedido faz um novo login).');
+    }
+  }
+
+  _binarioDeSessaoExpirada(status, buffer, contentType) {
+    if (status < 400 && !/text\/html/i.test(contentType)) return false;
+    return sessaoExpirada(status, buffer.toString('utf8', 0, 64 * 1024), contentType);
+  }
+
+  /** Confere o destino só pelo caminho, ANTES de baixar: recusar depois desperdiçaria o download. */
+  _conferirDestino(destino) {
+    conferirDestino(destino, this.saidaDir ? { base: this.saidaDir } : undefined);
+  }
+
+  /**
+   * Salva um binário baixado e devolve um resumo (nunca o conteúdo — estouraria o contexto).
+   * O destino fica preso à pasta de saída (FLUIG_SAIDA_DIR): o conteúdo é de quem subiu o anexo ou o
+   * documento, e o caminho vem do agente — ver src/saida.js.
+   */
   _salvar(destino, bin, contexto) {
     if (bin.status < 200 || bin.status >= 300) {
       throw new Error(`${contexto}: HTTP ${bin.status} — ${bin.buffer.toString('utf8').slice(0, 300)}`);
     }
-    writeFileSync(destino, bin.buffer);
+    if (this._binarioDeSessaoExpirada(bin.status, bin.buffer, bin.contentType)) {
+      throw new Error(`${contexto}: o servidor devolveu a página de login/SSO em vez do arquivo, mesmo depois de `
+        + 'um novo login. Nada foi gravado. Rode fluig_session_reset e tente de novo.');
+    }
+    const arquivo = gravarNaSaida(destino, bin.buffer, this.saidaDir ? { base: this.saidaDir } : undefined);
     return {
-      arquivo: destino, bytes: bin.buffer.length,
+      arquivo, bytes: bin.buffer.length,
       contentType: bin.contentType, contentDisposition: bin.contentDisposition,
     };
   }
@@ -1547,6 +1679,7 @@ export class FluigClient {
   async processDiagramGet(processId, processVersion, destino) {
     const p = `/process-management/api/v2/processes/${encodeURIComponent(processId)}`
       + `/process-versions/${encodeURIComponent(processVersion)}/diagram`;
+    if (destino) this._conferirDestino(destino);
     const bin = await this._restBinary(p, { accept: 'application/svg+xml' });
     if (destino) return this._salvar(destino, bin, 'processDiagramGet');
     if (bin.status < 200 || bin.status >= 300) throw new Error(`processDiagramGet: HTTP ${bin.status}`);
@@ -1562,6 +1695,7 @@ export class FluigClient {
   async attachmentDownload(processInstanceId, attachmentSequence, destino) {
     const p = `/process-management/api/v2/requests/${encodeURIComponent(processInstanceId)}`
       + `/attachments/${encodeURIComponent(attachmentSequence)}/download`;
+    this._conferirDestino(destino);
     return this._salvar(destino, await this._restBinary(p), 'attachmentDownload');
   }
 
@@ -1655,6 +1789,7 @@ export class FluigClient {
    *    termina no mesmo helper dos thumbnails. Use Content-Disposition e a extensão do nome.
    */
   async gedDownload(documentId, destino) {
+    this._conferirDestino(destino);
     const meta = await this._rest(`/content-management/api/v2/documents/${encodeURIComponent(documentId)}`);
     const bin = await this._restBinary(`/content-management/api/v2/documents/${encodeURIComponent(documentId)}/stream`);
     const salvo = this._salvar(destino, bin, 'gedDownload');
@@ -1680,7 +1815,8 @@ export class FluigClient {
   async formCreate({ formName, parentId, zipPath }, opts = {}) {
     if (opts.confirm !== true) throw new Error('formCreate exige { confirm:true } — cria documento no GED.');
     if (!zipPath) throw new Error('formCreate: informe zipPath (ZIP com o HTML do formulário).');
-    const arquivo = readFileSync(zipPath);
+    // O arquivo sai da máquina: só de dentro da pasta de saída (ver src/saida.js).
+    const arquivo = lerNaSaida(zipPath, { campo: 'zipPath', base: this.saidaDir });
     const fd = new FormData();
     fd.append('file', new Blob([arquivo]), zipPath.split(/[\\/]/).pop());
     fd.append('formName', String(formName));
@@ -1691,6 +1827,7 @@ export class FluigClient {
     });
     const texto = await r.text();
     if (r.status < 200 || r.status >= 300) throw new Error(`formCreate: HTTP ${r.status} — ${texto.slice(0, 400)}`);
+    this._recusarPaginaDeSessao(r, texto, 'formCreate');
     try { return JSON.parse(texto); } catch { return { ok: true, status: r.status, resposta: texto }; }
   }
 
@@ -1789,6 +1926,7 @@ export class FluigClient {
     const qs = this._qs({ anonymizeForms });
     const base = `/process-management/api/v2/workflow-exporter/${encodeURIComponent(processInstanceId)}`;
     if (destino) {
+      this._conferirDestino(destino);
       return this._salvar(destino, await this._restBinary(`${base}/download${qs}`, { accept: 'application/zip' }), 'workflowExporter');
     }
     const r = await this._restRaw(`${base}${qs}`, { accept: 'text/plain' });
@@ -1803,8 +1941,9 @@ export class FluigClient {
    */
   async gedUpload(caminhoLocal, parentId, opts = {}) {
     if (opts.confirm !== true) throw new Error('gedUpload exige { confirm:true } — publica documento no GED.');
+    // O arquivo sai da máquina: só de dentro da pasta de saída (ver src/saida.js).
+    const conteudo = lerNaSaida(caminhoLocal, { campo: 'caminhoLocal', base: this.saidaDir });
     const nome = opts.nomeArquivo || caminhoLocal.split(/[\\/]/).pop();
-    const conteudo = readFileSync(caminhoLocal);
     const fd = new FormData();
     fd.append('file', new Blob([conteudo]), nome);
     const cookie = await this.login();
@@ -1812,6 +1951,7 @@ export class FluigClient {
     const r = await this._fetch(p, { method: 'POST', headers: { Cookie: cookie, Accept: 'application/json' }, body: fd });
     const texto = await r.text();
     if (r.status < 200 || r.status >= 300) throw new Error(`gedUpload: HTTP ${r.status} — ${texto.slice(0, 400)}`);
+    this._recusarPaginaDeSessao(r, texto, 'gedUpload');
     try { return JSON.parse(texto); } catch { return { ok: true, status: r.status, arquivo: nome, resposta: texto }; }
   }
 
