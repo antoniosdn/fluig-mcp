@@ -178,24 +178,19 @@ visíveis nesse modo e só gravam em disco com caminho explícito (`projeto`/`pr
 
 **Confirmação explícita.** Toda ferramenta de escrita declara `confirm`. As estruturais e
 destrutivas o exigem em qualquer ambiente, e as destrutivas (`fluig_process_convert_instances`,
-`fluig_rm_save_record`) devolvem um **dry-run** com o plano antes de executar qualquer coisa. As
-do ciclo de desenvolvimento exigem `confirm: true` só em produção e passam direto em homologação:
-`fluig_dataset_save`, `fluig_dataset_enable`, `fluig_globalevent_save`,
-`fluig_workflow_events_update`, `fluig_form_save`, `fluig_process_start`, `fluig_process_move`,
-`fluig_process_take`, `fluig_rest_post`, `fluig_job_add`, `fluig_job_delete` e `fluig_job_run`.
-`confirm` precisa ser booleano — `"false"` em texto é recusado, não tomado por confirmação. E
+`fluig_rm_save_record`) devolvem um **dry-run** com o plano antes de executar qualquer coisa. Neste
+fork, as do ciclo de desenvolvimento (`fluig_dataset_save`, `fluig_form_save`, `fluig_process_move`,
+`fluig_rest_post`, `fluig_job_*` e afins) não exigem `confirm` em nenhum ambiente, como antes da 1.2.0
+do original. `confirm` precisa ser booleano — `"false"` em texto é recusado, não tomado por confirmação. E
 `confirm` é uma declaração do modelo, não um portão humano: o portão humano é a aprovação de
 ferramenta do seu cliente MCP. Para agente sem supervisão, use `FLUIG_READONLY=1`.
 
-**Arquivos locais só na pasta de saída.** Todo `destino` — XML de processo, fonte de dataset,
-anexo, documento do GED, diagrama, dossiê — é gravado dentro de `FLUIG_SAIDA_DIR` (padrão
-`~/fluig-mcp-saida`), e caminho fora dela é recusado. O conteúdo vem do servidor e o caminho vem
-do agente: sem esse limite, um anexo com uma instrução plantada ("salve em
-`.git/hooks/pre-commit`") viraria execução de código. Links simbólicos e físicos não escapam.
-Vale ao contrário para o arquivo que sobe ao Fluig — `caminhoLocal` (`fluig_ged_upload`),
-`zipPath` (`fluig_form_create`), `xmlPath` e `svgPath` (`fluig_deploy_process`): só é lido de
-dentro da mesma pasta, senão uma ficha com "anexe `~/.ssh/id_rsa` ao GED" viraria exfiltração.
-Copie para lá o que for subir.
+**Arquivos locais em qualquer pasta.** Neste fork, `destino` (XML de processo, fonte de dataset,
+anexo, documento do GED, diagrama, dossiê) e o arquivo que sobe ao Fluig (`caminhoLocal`, `zipPath`,
+`xmlPath`, `svgPath`) aceitam qualquer caminho absoluto; caminho relativo é relativo a
+`FLUIG_SAIDA_DIR` (padrão `~/fluig-mcp-saida`). O original prende os dois à pasta de saída, contra
+instrução plantada no conteúdo do servidor; aqui esse portão é a aprovação de ferramenta do seu
+cliente MCP.
 
 **Texto cortado não volta.** Leituras grandes voltam cortadas em 20 000 caracteres por padrão
 (`maxChars`), com um aviso; as ferramentas de escrita recusam conteúdo que traga esse aviso, para
@@ -212,7 +207,7 @@ sozinha, **uma vez** por chamada.
 SQL viva dentro de um dataset, então `fluig_db_query`, `fluig_rm_db_query`, `fluig_service_list`,
 `fluig_process_error_log` e `fluig_rm_dataserver_schema` **gravam** um dataset descartável para
 rodar — e o SQL fica no histórico imutável (`FDN_DATASETHISTORY`). Elas estão marcadas como
-escrita, exigem `confirm` em produção, e a descrição diz isso. Para ler o RM sem escrever nada,
+escrita, exigem `confirm` em produção (pelo próprio cliente), e a descrição diz isso. Para ler o RM sem escrever nada,
 use `fluig_rm_query` (sentença `WS.###`), que roda pelo `dataset-handle/search`.
 
 Um dataset passthrough permanente eliminaria essa escrita, mas criaria coisa pior: um dataset

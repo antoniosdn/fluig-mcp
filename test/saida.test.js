@@ -73,19 +73,20 @@ test('a pasta padrão fica na home do usuário, não na pasta onde o MCP roda', 
   assert.equal(pastaSaidaPadrao({}), join(homedir(), 'fluig-mcp-saida'));
 });
 
-test('pasta de saída que não dá para criar vira erro que cita FLUIG_SAIDA_DIR', (t) => {
+test('pasta que não dá para criar vira erro claro', (t) => {
   const dir = pasta(t);
   const arquivo = join(dir, 'sou-um-arquivo');
   writeFileSync(arquivo, '');
-  assert.throws(() => entregarTexto('x', { destino: 'a.txt', base: join(arquivo, 'saida') }), /FLUIG_SAIDA_DIR/);
+  assert.throws(() => entregarTexto('x', { destino: 'a.txt', base: join(arquivo, 'saida') }), /não consegui criar/);
 });
 
-test('destino fora da pasta base é recusado (o conteúdo vem do servidor; não pode virar ~/.bashrc)', (t) => {
+// Fork: sem a trava da pasta de saída da 1.2.0 do original.
+test('destino fora da pasta base é aceito; relativo continua relativo a ela', (t) => {
   const dir = pasta(t);
-  assert.throws(() => entregarTexto('x', { destino: '../fora.txt', base: dir }), /FLUIG_SAIDA_DIR/);
-  assert.throws(() => entregarTexto('x', { destino: 'sub/../../fora.txt', base: dir }), /fora da pasta/);
-  assert.throws(() => entregarTexto('x', { destino: join(tmpdir(), 'fora.txt'), base: dir }), /fora da pasta/);
-  assert.throws(() => entregarTexto('x', { destino: `${dir}-irma/a.txt`, base: dir }), /fora da pasta/);
+  const base = join(dir, 'base');
+  assert.equal(entregarTexto('x', { destino: '../fora.txt', base }).arquivo, join(dir, 'fora.txt'));
+  assert.equal(entregarTexto('y', { destino: join(dir, 'outra', 'a.txt'), base }).arquivo, join(dir, 'outra', 'a.txt'));
+  assert.equal(readFileSync(join(dir, 'outra', 'a.txt'), 'utf8'), 'y');
   assert.throws(() => entregarTexto('x', { destino: '.', base: dir }), /própria pasta/);
   assert.throws(() => entregarTexto('x', { destino: 'sub/', base: dir }), /nome de arquivo/);
 });
@@ -96,24 +97,6 @@ test('nome que só começa com dois pontos é um nome comum, dentro da pasta', (
   // "..." termina em ponto: nome comum no Linux e no macOS, inválido no Windows (ver verificadores.test.js).
   if (process.platform === 'win32') assert.throws(() => gravarNaSaida('...', 'x', { base: dir }), /inválido no Windows/);
   else assert.equal(gravarNaSaida('...', 'x', { base: dir }), join(dir, '...'));
-});
-
-test('link de pasta (symlink ou junction) dentro da base não serve de saída', (t) => {
-  const dir = pasta(t);
-  const base = join(dir, 'base');
-  const fora = join(dir, 'fora');
-  mkdirSync(base);
-  mkdirSync(fora);
-  // 'junction' é ignorado fora do Windows; no Windows dispensa o privilégio de criar symlink.
-  symlinkSync(fora, join(base, 'atalho'), 'junction');
-  assert.throws(() => entregarTexto('x', { destino: 'atalho/a.txt', base }), /fora da pasta/);
-  assert.equal(existsSync(join(fora, 'a.txt')), false);
-  assert.throws(() => entregarTexto('x', { destino: 'atalho/sub/a.txt', base }), /fora da pasta/);
-  assert.equal(existsSync(join(fora, 'sub')), false, 'nem a subpasta pode ser criada fora');
-
-  symlinkSync(join(fora, 'nao-existe'), join(base, 'quebrado'), 'junction');
-  assert.throws(() => entregarTexto('x', { destino: 'quebrado/a.txt', base }), /fora da pasta/);
-  assert.equal(existsSync(join(fora, 'nao-existe')), false);
 });
 
 test('link simbólico no nome final é recusado e o alvo fica intacto', (t) => {
@@ -155,45 +138,26 @@ test('lerNaSaida lê byte a byte o arquivo de dentro da pasta, por caminho relat
   assert.equal(lerNaSaida('proc.xml', { base: dir, encoding: 'utf8' }), '<x>ação</x>');
 });
 
-test('lerNaSaida recusa caminho fora da pasta (texto plantado no Fluig não sobe ~/.ssh) e cita o parâmetro', (t) => {
+test('lerNaSaida lê fora da pasta (absoluto ou ../) e recusa caminho vazio citando o parâmetro', (t) => {
   const dir = pasta(t);
   const base = join(dir, 'base');
   mkdirSync(base);
-  writeFileSync(join(dir, 'id_rsa'), 'segredo');
-  for (const caminho of [join(dir, 'id_rsa'), '../id_rsa', 'sub/../../id_rsa', `${base}-irma/id_rsa`]) {
-    assert.throws(() => lerNaSaida(caminho, { base, campo: 'caminhoLocal' }),
-      /caminhoLocal fora da pasta de saída .*FLUIG_SAIDA_DIR/, caminho);
+  writeFileSync(join(dir, 'proc.xml'), '<x/>');
+  for (const caminho of [join(dir, 'proc.xml'), '../proc.xml', 'sub/../../proc.xml']) {
+    assert.equal(lerNaSaida(caminho, { base, campo: 'xmlPath', encoding: 'utf8' }), '<x/>', caminho);
   }
   assert.throws(() => lerNaSaida('.', { base, campo: 'zipPath' }), /zipPath .*própria pasta de saída/);
   assert.throws(() => lerNaSaida('', { base, campo: 'zipPath' }), /zipPath inválido/);
   assert.throws(() => lerNaSaida(undefined, { base, campo: 'zipPath' }), /zipPath inválido/);
 });
 
-test('lerNaSaida: link (junction ou simbólico) dentro da pasta não alcança arquivo de fora', (t) => {
-  const dir = pasta(t);
-  const base = join(dir, 'base');
-  const fora = join(dir, 'fora');
-  mkdirSync(base);
-  mkdirSync(fora);
-  writeFileSync(join(fora, 'id_rsa'), 'segredo');
-  symlinkSync(fora, join(base, 'atalho'), 'junction');
-  assert.throws(() => lerNaSaida('atalho/id_rsa', { base }), /fora da pasta de saída/);
-  try {
-    symlinkSync(join(fora, 'id_rsa'), join(base, 'chave'), 'file');
-  } catch (e) {
-    if (e.code === 'EPERM') return t.skip('sem privilégio para criar symlink de arquivo (Windows sem Developer Mode)');
-    throw e;
-  }
-  assert.throws(() => lerNaSaida('chave', { base }), /fora da pasta de saída/);
-});
-
-test('lerNaSaida: arquivo que não existe, pasta e pasta de saída ausente viram erro claro', (t) => {
+test('lerNaSaida: arquivo que não existe, pasta e pasta base ausente viram erro claro', (t) => {
   const dir = pasta(t);
   mkdirSync(join(dir, 'sub'));
   assert.throws(() => lerNaSaida('nao-existe.zip', { base: dir, campo: 'zipPath' }), /zipPath: arquivo não encontrado/);
   assert.throws(() => lerNaSaida('sub', { base: dir, campo: 'zipPath' }), /zipPath não é um arquivo comum/);
   assert.throws(() => lerNaSaida('a.zip', { base: join(dir, 'nao-criada'), campo: 'zipPath' }),
-    /pasta de saída .* não existe.*FLUIG_SAIDA_DIR/);
+    /zipPath: arquivo não encontrado/);
 });
 
 test('texto cortado não pode ser gravado de volta no Fluig', () => {

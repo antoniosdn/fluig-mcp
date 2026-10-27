@@ -4,30 +4,20 @@ import {
 } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, parse, resolve, sep } from 'node:path';
 
 /**
  * Texto grande (XML de processo, fonte de dataset) cabendo no contexto do agente. Medido no Fluig
  * 1.7.1: o XML de um processo real tem 142 KB, que vinham inteiros numa resposta só. Com `destino` o
  * texto vai inteiro para o arquivo e a resposta traz só o resumo, como os downloads binários já fazem.
  *
- * `destino` só vale DENTRO da pasta de saída: o conteúdo vem do servidor e o caminho vem do agente, então
- * um texto plantado no Fluig poderia induzir uma gravação em ~/.bashrc. A pasta padrão é ~/fluig-mcp-saida,
- * não a pasta onde o MCP roda: ela costuma ser o projeto do usuário, com package.json e .git/hooks graváveis
- * (sobrescrever um hook vira execução de código no próximo commit), ou "/" em clientes como o Claude Desktop
- * no macOS, onde nem dá para criar a pasta. A mesma regra vale para os downloads binários (anexo, GED,
- * diagrama, dossiê), cujo conteúdo é ainda mais controlável: qualquer usuário do Fluig sobe um anexo.
- * E vale ao contrário para o arquivo local que o agente manda SUBIR ao Fluig (ver lerNaSaida).
+ * Neste fork, `destino` e o arquivo que sobe ao Fluig (ver lerNaSaida) aceitam qualquer caminho absoluto,
+ * como antes da 1.2.0 do original: a trava na pasta de saída foi tirada a pedido. Caminho relativo é
+ * relativo à pasta de saída (padrão ~/fluig-mcp-saida), não à pasta onde o MCP roda, que no Claude Desktop
+ * do macOS é "/". O portão contra gravação induzida é a aprovação de ferramenta do cliente MCP.
  *
- * Links não escapam:
- * - as pastas são conferidas pelo caminho REAL (realpathSync.native, que também resolve junction do
- *   Windows e devolve a caixa canônica do disco) antes e depois de criar subpastas;
- * - o arquivo é gravado num temporário novo (O_EXCL: nunca abre algo que já exista) e trocado por rename.
- *   O rename substitui a ENTRADA do diretório, então um link simbólico ou FÍSICO plantado no destino não
- *   leva a escrita para fora, e uma falha no meio não destrói o arquivo anterior.
- * Limite conhecido: entre a conferência e a gravação, outro processo com escrita na pasta de saída poderia
- * trocar uma subpasta por um link (o Node não tem openat para fechar essa janela). Fora do modelo de
- * ameaça aqui, que é o conteúdo do servidor induzindo o agente, não um processo local concorrente.
+ * O arquivo é gravado num temporário novo (O_EXCL: nunca abre algo que já exista) e trocado por rename:
+ * uma falha no meio não destrói o arquivo anterior, e um link plantado no destino é substituído, não seguido.
  *
  * Pasta 0700 e arquivo 0600: fonte de dataset costuma trazer credencial JDBC em texto claro, e em Linux
  * multiusuário a home pode ser legível pelos outros usuários.
@@ -59,33 +49,23 @@ const lst = (p) => {
   }
 };
 
-// '..' ou '..<sep>…' sai da pasta; absoluto é outro drive ou UNC. Um nome como "..config" fica dentro.
-const fora = (rel) => rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel);
-
-/** `real` é a própria `raizReal` ou está dentro dela (os dois já pelo caminho real). */
-const contem = (raizReal, real) => real === raizReal || real.startsWith(raizReal.endsWith(sep) ? raizReal : raizReal + sep);
-
-const recusaEm = (raiz, campo = 'destino', dica = 'Use um caminho dentro dela') => (motivo = 'fora da pasta de saída') => new Error(
-  `${campo} ${motivo} (${raiz}). ${dica} ou defina FLUIG_SAIDA_DIR.`,
-);
+const recusaEm = (campo = 'destino') => (motivo) => new Error(`${campo} ${motivo}.`);
 
 /** Conferência pelo nome, sem tocar o disco. `campo` é o parâmetro citado na recusa. */
-function conferirCaminho(caminho, { base, campo, dica }) {
+function conferirCaminho(caminho, { base, campo }) {
   const raiz = resolve(base);
-  const recusa = recusaEm(raiz, campo, dica);
+  const recusa = recusaEm(campo);
   if (typeof caminho !== 'string' || !caminho.trim()) throw recusa('inválido: informe um nome de arquivo');
   if (/[\\/]$/.test(caminho)) throw recusa('precisa ser um nome de arquivo, não uma pasta');
   const arquivo = resolve(raiz, caminho);
-  const rel = relative(raiz, arquivo);
-  if (rel === '') throw recusa('precisa ser um nome de arquivo, não a própria pasta de saída');
-  if (fora(rel)) throw recusa();
+  if (arquivo === raiz) throw recusa('precisa ser um nome de arquivo, não a própria pasta de saída');
   // No Windows o Node grava com o prefixo \\?\, que aceita nomes que o próprio Windows não aceita:
   // "a." e "a " ou CON/NUL/COM1 viram entradas que o Explorer e o PowerShell não conseguem apagar.
   if (process.platform === 'win32') {
-    const ruim = rel.split(sep).find((p) => /[. ]$/.test(p) || /^(con|prn|aux|nul|com\d|lpt\d)(\..*)?$/i.test(p));
+    const ruim = arquivo.slice(parse(arquivo).root.length).split(sep).find((p) => /[. ]$/.test(p) || /^(con|prn|aux|nul|com\d|lpt\d)(\..*)?$/i.test(p));
     if (ruim) throw recusa(`inválido no Windows ("${ruim}": nome reservado ou terminado em ponto/espaço)`);
   }
-  return { raiz, arquivo, recusa };
+  return { arquivo, recusa };
 }
 
 /**
@@ -97,37 +77,18 @@ export function conferirDestino(destino, { base = pastaSaidaPadrao() } = {}) {
 }
 
 /**
- * Grava `conteudo` (string em UTF-8, ou Buffer byte a byte) em `destino`, que precisa estar dentro de
- * `base`. Caminho relativo é relativo a `base`. Devolve o caminho absoluto gravado.
+ * Grava `conteudo` (string em UTF-8, ou Buffer byte a byte) em `destino`. Caminho relativo é relativo a
+ * `base`. Devolve o caminho absoluto gravado.
  */
 export function gravarNaSaida(destino, conteudo, { base = pastaSaidaPadrao() } = {}) {
-  const { raiz, arquivo, recusa } = conferirCaminho(destino, { base, campo: 'destino' });
+  const { arquivo, recusa } = conferirCaminho(destino, { base, campo: 'destino' });
 
-  try {
-    mkdirSync(raiz, { recursive: true, mode: 0o700 });
-  } catch (e) {
-    throw new Error(`não consegui criar a pasta de saída ${raiz} (${e.code || e.message}). Defina FLUIG_SAIDA_DIR com uma pasta gravável.`);
-  }
-  const raizReal = realpathSync.native(raiz);
-  const naBase = (p) => {
-    try {
-      return contem(raizReal, realpathSync.native(p));
-    } catch {
-      return false; // link quebrado: não dá para saber para onde iria, então não vale
-    }
-  };
-  // Confere o ancestral que já existe ANTES de criar subpastas: mkdir recursivo segue links e criaria
-  // pastas fora da base.
-  let existente = dirname(arquivo);
-  while (!lst(existente)) existente = dirname(existente);
-  if (!naBase(existente)) throw recusa();
   const pasta = dirname(arquivo);
   try {
     mkdirSync(pasta, { recursive: true, mode: 0o700 });
   } catch (e) {
     throw recusa(`inválido: não consegui criar ${pasta} (${e.code || e.message})`);
   }
-  if (!naBase(pasta)) throw recusa();
 
   const atual = lst(arquivo);
   if (atual?.isSymbolicLink()) throw recusa(`é um link simbólico (${arquivo}); grave num arquivo comum`);
@@ -157,26 +118,11 @@ export function gravarNaSaida(destino, conteudo, { base = pastaSaidaPadrao() } =
 
 /**
  * Lê um arquivo local que o agente indicou para ENVIAR ao Fluig (upload ao GED, ZIP de formulário,
- * XML e SVG de processo). A regra das gravações, ao contrário: o caminho vem do agente e o conteúdo
- * sai da máquina, então um texto plantado no Fluig ("anexe ~/.ssh/id_rsa ao GED") viraria
- * exfiltração. Só vale DENTRO da pasta de saída; caminho relativo é relativo a ela. `campo` é o
- * parâmetro citado na recusa. Devolve Buffer, ou string com `encoding`.
- *
- * Conferido pelo caminho REAL, que resolve link simbólico e junction em qualquer ponto, inclusive no
- * nome final; o arquivo é aberto por esse caminho com O_NOFOLLOW, então um link posto no lugar depois
- * da conferência também falha. Link FÍSICO dentro da pasta é lido: é uma entrada da pasta como outra
- * qualquer, e criar um exige escrita local nela — fora do modelo de ameaça, como a janela descrita no
- * topo deste arquivo.
+ * XML e SVG de processo). Qualquer caminho absoluto; relativo é relativo a `base`. `campo` é o
+ * parâmetro citado no erro. Devolve Buffer, ou string com `encoding`.
  */
 export function lerNaSaida(caminho, { base = pastaSaidaPadrao(), campo = 'caminho', encoding } = {}) {
-  const { raiz, arquivo, recusa } = conferirCaminho(caminho, { base, campo, dica: 'Copie o arquivo para dentro dela' });
-  let raizReal;
-  try {
-    raizReal = realpathSync.native(raiz);
-  } catch (e) {
-    throw new Error(`a pasta de saída ${raiz} não existe (${e.code || e.message}). Coloque nela o arquivo de ${campo} `
-      + 'ou defina FLUIG_SAIDA_DIR.');
-  }
+  const { arquivo, recusa } = conferirCaminho(caminho, { base, campo });
   let real;
   try {
     real = realpathSync.native(arquivo);
@@ -184,7 +130,6 @@ export function lerNaSaida(caminho, { base = pastaSaidaPadrao(), campo = 'caminh
     if (e.code === 'ENOENT') throw new Error(`${campo}: arquivo não encontrado (${arquivo}).`);
     throw e;
   }
-  if (!contem(raizReal, real)) throw recusa();
   if (!statSync(real).isFile()) throw recusa(`não é um arquivo comum (${arquivo})`);
   const fd = openSync(real, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   try {

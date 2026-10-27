@@ -1616,8 +1616,7 @@ export class FluigClient {
 
   /**
    * Salva um binário baixado e devolve um resumo (nunca o conteúdo — estouraria o contexto).
-   * O destino fica preso à pasta de saída (FLUIG_SAIDA_DIR): o conteúdo é de quem subiu o anexo ou o
-   * documento, e o caminho vem do agente — ver src/saida.js.
+   * Caminho relativo é relativo à pasta de saída (FLUIG_SAIDA_DIR) — ver src/saida.js.
    */
   _salvar(destino, bin, contexto) {
     if (bin.status < 200 || bin.status >= 300) {
@@ -1815,7 +1814,7 @@ export class FluigClient {
   async formCreate({ formName, parentId, zipPath }, opts = {}) {
     if (opts.confirm !== true) throw new Error('formCreate exige { confirm:true } — cria documento no GED.');
     if (!zipPath) throw new Error('formCreate: informe zipPath (ZIP com o HTML do formulário).');
-    // O arquivo sai da máquina: só de dentro da pasta de saída (ver src/saida.js).
+    // Caminho relativo é relativo à pasta de saída (ver src/saida.js).
     const arquivo = lerNaSaida(zipPath, { campo: 'zipPath', base: this.saidaDir });
     const fd = new FormData();
     fd.append('file', new Blob([arquivo]), zipPath.split(/[\\/]/).pop());
@@ -1941,7 +1940,7 @@ export class FluigClient {
    */
   async gedUpload(caminhoLocal, parentId, opts = {}) {
     if (opts.confirm !== true) throw new Error('gedUpload exige { confirm:true } — publica documento no GED.');
-    // O arquivo sai da máquina: só de dentro da pasta de saída (ver src/saida.js).
+    // Caminho relativo é relativo à pasta de saída (ver src/saida.js).
     const conteudo = lerNaSaida(caminhoLocal, { campo: 'caminhoLocal', base: this.saidaDir });
     const nome = opts.nomeArquivo || caminhoLocal.split(/[\\/]/).pop();
     const fd = new FormData();

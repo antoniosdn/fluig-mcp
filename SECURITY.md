@@ -51,19 +51,13 @@ cofre (`secret-tool`, `security`, `pass`, `op`), executado sem shell — veja
 
 ### Arquivos locais
 
-Todo `destino` — XML de processo, fonte de dataset, anexo, documento do GED, diagrama, dossiê — é
-gravado dentro de `FLUIG_SAIDA_DIR` (padrão `~/fluig-mcp-saida`, pasta 0700, arquivos 0600). O
-conteúdo vem do servidor e o caminho vem do agente: sem esse limite, um anexo com uma instrução
-plantada poderia ser gravado em `~/.bashrc` ou num hook do git. Caminho fora da pasta é recusado,
-links simbólicos e junctions são conferidos pelo caminho real, e a gravação por temporário +
-`rename` não segue link físico.
-
-O caminho do arquivo que **sobe** ao Fluig também vem do agente: `caminhoLocal`
-(`fluig_ged_upload`), `zipPath` (`fluig_form_create`), `xmlPath` e `svgPath`
-(`fluig_deploy_process`). Sem limite, um texto plantado numa ficha ou num anexo poderia induzir o
-agente a publicar `~/.ssh/id_rsa` no GED. Esses arquivos só são lidos de dentro da mesma pasta,
-conferidos pelo caminho real e abertos sem seguir link. Um link físico dentro da pasta é lido como
-qualquer arquivo dela: criar um exige escrita local na pasta.
+Neste fork, `destino` (XML de processo, fonte de dataset, anexo, documento do GED, diagrama,
+dossiê) e o arquivo que **sobe** ao Fluig (`caminhoLocal`, `zipPath`, `xmlPath`, `svgPath`)
+aceitam qualquer caminho absoluto; relativo é relativo a `FLUIG_SAIDA_DIR` (padrão
+`~/fluig-mcp-saida`). O conteúdo baixado vem do servidor e o caminho vem do agente: um anexo com
+instrução plantada poderia pedir gravação em `~/.bashrc` ou upload de `~/.ssh/id_rsa`. O portão é a
+aprovação de ferramenta do cliente MCP — não aprove `destino` ou upload fora do que você pediu. A
+gravação é por temporário + `rename` (arquivo 0600) e não segue link no destino.
 
 ### Ferramentas de leitura que escrevem
 

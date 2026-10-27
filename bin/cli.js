@@ -5,8 +5,8 @@
  * Serve para conferir credencial e conectividade antes de ligar o servidor MCP num agente, e para
  * despejar datasets, formulários e definições de processo em disco.
  *
- * Tudo o que é gravado fica preso à pasta de saída (src/saida.js), a mesma do servidor: nome de anexo
- * de formulário e id de evento vêm do SERVIDOR, e um "../" plantado ali levaria a escrita para fora.
+ * Tudo o que é gravado vai para a pasta de saída (src/saida.js), a mesma do servidor: nome de anexo
+ * de formulário e id de evento vêm do SERVIDOR e passam por nomeDeArquivo, sem pasta.
  */
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -50,8 +50,7 @@ function salvar(saida, relativo, conteudo) {
 
 /**
  * Nome de arquivo que vem do SERVIDOR (anexo de formulário, id de evento) precisa ser UM nome, sem
- * pasta. A contenção do gravarNaSaida sozinha não basta: "forms/7/../../x" ainda cai dentro da pasta de
- * saída, só que sobre o arquivo de outro comando. ':' fica de fora porque no Windows é unidade ("C:x")
+ * pasta: "../../x" levaria a escrita para fora da pasta de saída, que o gravarNaSaida não confere. ':' fica de fora porque no Windows é unidade ("C:x")
  * ou fluxo alternativo do NTFS ("a:b" grava num fluxo escondido de "a").
  */
 export function nomeDeArquivo(nome) {

@@ -7,6 +7,11 @@ versionamento [SemVer](https://semver.org/lang/pt-BR/).
 
 ### Mudado
 
+- Fork: tiradas duas travas da 1.2.0 do original. `destino` e o arquivo que sobe ao Fluig
+  (`caminhoLocal`, `zipPath`, `xmlPath`, `svgPath`) voltam a aceitar qualquer caminho absoluto
+  (relativo continua relativo a `FLUIG_SAIDA_DIR`), e as doze escritas do ciclo de desenvolvimento
+  voltam a rodar em produção sem `confirm`. Ficam a gravação atômica, `confirm` booleano e a recusa
+  de texto cortado.
 - Spec é só para processo novo: `fluig_flow_deploy` recusa `spec` com `novo=false` (a spec renumera as
   atividades) e manda usar `fluig_flow_import`; `fluig_flow_generate` avisa `W_PROCESSO_EXISTENTE`
   quando o processo já existe no servidor. Sai a herança da definição do servidor no caminho por spec.

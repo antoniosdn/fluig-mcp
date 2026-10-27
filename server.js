@@ -39,11 +39,9 @@ function clienteDe(env) {
 const S = (props = {}, required = []) => ({ type: 'object', properties: props, required });
 const str = (description) => ({ type: 'string', description });
 const num = (description) => ({ type: 'number', description });
-// Todo `destino` fica preso à pasta de saída (ver src/saida.js): o conteúdo vem do servidor e o
-// caminho vem do agente.
-const destinoNaSaida = (oQue) => str(`${oQue}, dentro de FLUIG_SAIDA_DIR (padrão: ~/fluig-mcp-saida); `
-  + 'caminho relativo é relativo a ela, e caminho fora dela é recusado');
-// O mesmo vale para o arquivo local que sobe ao Fluig: o caminho vem do agente e o conteúdo sai da máquina.
+// `destino` e o arquivo local que sobe ao Fluig aceitam qualquer caminho absoluto (ver src/saida.js).
+const destinoNaSaida = (oQue) => str(`${oQue}; caminho absoluto, ou relativo a FLUIG_SAIDA_DIR `
+  + '(padrão: ~/fluig-mcp-saida)');
 const arquivoNaSaida = destinoNaSaida;
 // Parâmetros comuns das ferramentas que devolvem texto grande.
 const SAIDA = {
@@ -1319,27 +1317,6 @@ const TOOLS_ESCRITA = new Set([
 ]);
 for (const t of TOOLS) t.write = TOOLS_ESCRITA.has(t.name);
 
-/**
- * Escritas que em homologação passam direto e em PRODUÇÃO exigem confirm:true — o mesmo critério do
- * `_guardProdWrite` de src/client.js. São as do ciclo de desenvolvimento (salvar dataset, publicar
- * formulário, mover solicitação de teste): pedir confirm a cada chamada em homologação só ensinaria o
- * agente a mandar confirm:true sempre. As demais escritas exigem confirm em qualquer ambiente, e o
- * próprio cliente recusa. A conferência fica no despacho, não nos métodos do cliente, porque eles
- * servem também a outras ferramentas: o db_query grava o dataset descartável por `saveDataset`, e
- * `_restRaw` é a base de quase toda rota REST.
- */
-const CONFIRM_EM_PROD = new Set([
-  'fluig_dataset_save', 'fluig_dataset_enable', 'fluig_globalevent_save', 'fluig_workflow_events_update',
-  'fluig_form_save', 'fluig_process_start', 'fluig_process_move', 'fluig_process_take', 'fluig_rest_post',
-  'fluig_job_add', 'fluig_job_delete', 'fluig_job_run',
-]);
-for (const t of TOOLS) {
-  if (!CONFIRM_EM_PROD.has(t.name)) continue;
-  t.inputSchema.properties.confirm = {
-    type: 'boolean', description: 'obrigatório em env="prod" (em homologação passa direto)',
-  };
-}
-
 const READONLY = /^(1|true|yes|on)$/i.test(String(process.env.FLUIG_READONLY || ''));
 const TOOLS_ATIVAS = READONLY ? TOOLS.filter(t => !t.write) : TOOLS;
 
@@ -1363,7 +1340,7 @@ Ambiente (nenhum tem default — veja .env.example):
                     fluig_flow_generate, fluig_flow_regenerate e fluig_flow_import continuam visíveis e gravam em disco
                     apenas com caminho explícito (projeto/processo), sem sobrescrever sem pedir.
   FLUIG_PASS_CMD    comando que imprime a senha (cofre do sistema); vale a primeira linha.
-  FLUIG_SAIDA_DIR   pasta onde destino grava e de onde sai o arquivo que sobe ao Fluig
+  FLUIG_SAIDA_DIR   base dos caminhos relativos de destino e do arquivo que sobe ao Fluig
                     (caminhoLocal, zipPath, xmlPath, svgPath). Padrão: ~/fluig-mcp-saida.
 
 Toda chamada exige o parâmetro env ("teste" ou "prod"). Não há default: é o que impede
@@ -1441,10 +1418,6 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       // Os handlers liam `!!confirm`, e a string "false" contava como confirmação.
       if (args.confirm !== undefined && typeof args.confirm !== 'boolean') {
         throw new Error(`confirm precisa ser booleano (true ou false), não ${JSON.stringify(args.confirm)}.`);
-      }
-      if (CONFIRM_EM_PROD.has(tool.name) && args.env === 'prod' && args.confirm !== true) {
-        throw new Error(`${tool.name} altera o servidor de PRODUÇÃO e exige confirm:true. `
-          + 'Em homologação (env="teste") passa direto.');
       }
       // Texto que saiu cortado de uma leitura (ver src/saida.js) não volta para o Fluig.
       recusarCortado(args, '');
